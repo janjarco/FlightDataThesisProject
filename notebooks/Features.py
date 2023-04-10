@@ -5,6 +5,7 @@
 import os
 import pandas as pd
 import numpy as np
+from src.data.filter_columns_by_regex import filter_columns_by_regex
 
 #set working directory to this from the workspace
 os.chdir('/Users/janjarco/Programming/PrivateRepository/FlightDataThesisProject')
@@ -16,7 +17,6 @@ print(os.listdir("data"))
 # %% [markdown]
 # #### Reading the merged data frame of orders and clicks
 
-# %%
 clicks_orders_merge_currency = pd.read_csv("data/processed/clicks_orders_orderlines_merged.csv")
 
 # %%
@@ -24,8 +24,9 @@ clicks_orders_merge_currency = pd.read_csv("data/processed/clicks_orders_orderli
 clicks_orders_merge_currency.shape
 
 # %%
-clicks_orders_merge_currency['orders_if_order'] = np.where(clicks_orders_merge_currency['orders_order_id'].isna(),0,1)
-
+clicks_orders_merge_currency['orders_if_order'] = np.where(clicks_orders_merge_currency['orders_order_id'].notna() & clicks_orders_merge_currency['orders_cancelled'] == False,1, 0)
+# groupby orders_if_order and orders_cancelled
+clicks_orders_merge_currency.groupby(['orders_if_order', 'orders_cancelled']).size()
 clicks_orders_merge = clicks_orders_merge_currency[clicks_orders_merge_currency.orders_if_order == 1]
 # del clicks_orders_merge_currency
 clicks_orders_merge.shape
@@ -399,6 +400,10 @@ for col in search_changes_clicks_orders_merge_currency.columns:
     search_changes_conv_rates.append(clicks_orders_merge_currency.groupby(col)['orders_if_order'].agg(orders=('sum'), clicks=('count')).assign(conv_rate=lambda x: x['orders'] / x['clicks']))
     
 search_changes_conv_rates
+# %% [markdown]
+# #### Tweak with clicks_orders_merge_currency['orders_if_order']
+# %% 
+
 
 # %%
 # save clicks_orders_merge_currency to csv file
