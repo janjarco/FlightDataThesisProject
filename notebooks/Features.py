@@ -401,28 +401,12 @@ for col in search_changes_clicks_orders_merge_currency.columns:
 search_changes_conv_rates
 
 # %%
-
-# groupby by clicks_created_at_date and summarize orders_if_orders, number of clicks and calculate the conversion rate
-# Calculate conversion rate and save as 'conv_rate'
-conv_rates = clicks_orders_merge_currency.groupby('clicks_created_at_date')['orders_if_order'].agg(orders=('sum'), clicks=('count')).assign(conv_rate=lambda x: x['orders'] / x['clicks'])
-
-# groupby by weeks calculated from clicks_created_at_date and summarize orders_if_orders, number of clicks and calculate the conversion rate
-# Calculate conversion rate and save as 'conv_rate'
-conv_rates_weekly = (clicks_orders_merge_currency
-                     .assign(clicks_created_at_week=lambda x: x['clicks_created_at_datetime'].dt.to_period('W'))
-                     .groupby('clicks_created_at_week')['orders_if_order']
-                     .agg(orders=('sum'), clicks=('count'))
-                     .assign(conv_rate=lambda x: x['orders'] / x['clicks']))
-
-
-# plot conv_rate by date 
-conv_rates_weekly.plot(y='conv_rate', figsize=(15, 5))
-
-
-
-# %%
 # save clicks_orders_merge_currency to csv file
 clicks_orders_merge_currency.to_csv('data/processed/clicks_orders_merge_currency.csv', index=False)
+# save to pickle file search_engine_changes
+import pickle
+with open('data/processed/search_engine_changes.pkl', 'wb') as f:
+    pickle.dump(search_engine_changes, f)
 
 # %% [markdown]
 # Saving workspace with user input

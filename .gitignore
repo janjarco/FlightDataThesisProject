@@ -81,6 +81,13 @@ target/
 # exclude saved workspaces from source control by default
 /saved_workspaces/
 
+# exclude arhives
+/archive/
+
+# catboost models ignore
+/catboost_info/
+
+
 # Mac OS-specific storage files
 .DS_Store
 
@@ -103,3 +110,7 @@ src/models/train_model.py
 src/visualization/__init__.py
 src/visualization/visualize.py
 docs/conf.py
+.Rproj.user
+CATE.R
+.Rhistory
+FlightDataThesisProject.Rproj
