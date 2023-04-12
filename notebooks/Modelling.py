@@ -14,137 +14,101 @@ os.chdir('/Users/janjarco/Programming/PrivateRepository/FlightDataThesisProject'
 #list all the files in current working directory
 print(os.listdir("data"))
 
-# %%
-import time
-start_time = time.time()
-df = pd.read_csv("data/processed/clicks_orders_merge_currency.csv", low_memory=True, parse_dates=['clicks_created_at_datetime', 'orders_created_at_datetime'])
-end_time = time.time()
-elapsed_time = end_time - start_time
-print('Time elapsed (in seconds):', elapsed_time)
+#%%
+# read all pickles with modelling_dataset in the name into a dictionary
+modelling_datasets = {}
+for file in os.listdir("data/processed"):
+    if "modelling_dataset" in file:
+        modelling_datasets[file] = pd.read_pickle(f"data/processed/{file}")
+new_keys = ["EUR", "DKK", "SEK", "NOK"]
+
+modelling_datasets={new_keys[i]: modelling_datasets[j] for i, j in enumerate(modelling_datasets)}
 
 #%%
-# save to csv names of columns with first 5 values by value counts for each column
+# load df
+x_cols = [
+    'clicks_itinerary_travel_timehours', 
+    'clicks_itinerary_totaldistance',
+    'clicks_passengers_count',
+    'google_trends',
+    'clicks_mobile', 
+    'clicks_itinerary_sales_price_pax',  
+    "clicks_itinerary_segment_count", 
+    "clicks_created_at_datetime_weekend",
+    "clicks_created_at_datetime_hour",
+    "clicks_itinerary_with_baggage", 
+    "clicks_itinerary_direct_flight",
+    "interaction_google_trends_distance",
+    "interaction_google_trends_passengers",
+    "interaction_google_trends_sales_price_pax",
+    "interaction_google_trends_sales_price",
+    "interaction_google_trends_travel_time",
+    "interaction_google_trends_direct_flight",
+    "interaction_google_trends_weekend",
+    "interaction_google_trends_baggage",
+    "ratio_sales_price_travel_time",
+    "ratio_distance_passenger",
+    "ratio_travel_time_distance",
+    "ratio_sales_price_distance",
+    "interaction_passengers_weekend",
+    "interaction_mobile_direct_flight",
+    ]
+y_col = 'orders_if_order_bin'
+d_col = "mobile_support_denmark"
 
-columns_values = [df[col].value_counts().head(5).index.tolist() for col in df.columns]
+modelling_df = modelling_datasets["DKK"]
 
-# columns_values is a list of lists concatenate them row by row to the dataframe 
-df_columns_values = pd.DataFrame(columns_values)
-import openpyxl
-pd.concat([pd.Series(df.columns), df_columns_values], axis=1).to_excel("data/processed/columns_values.xlsx", index=False)
-
-# %% [markdown]
 # read pickle file search_engine_changes
 import pickle
 search_engine_changes = pickle.load(open("data/processed/search_engine_changes.pkl", "rb"))
-    
-# %%
-# filter df.columns.values  by regex
-from src.data.filter_columns_by_regex import filter_columns_by_regex
 
+time_filter_mobile_pay_support_Denmark = search_engine_changes['mobile.pay.support.Denmark'] - 1*(max(modelling_df['clicks_created_at_datetime']) - search_engine_changes['mobile.pay.support.Denmark'])
+modelling_df = modelling_df[modelling_df['clicks_created_at_datetime'] > time_filter_mobile_pay_support_Denmark]
 
-experiment_vars = filter_columns_by_regex(df, '.*experiments')
-experiment_vars
-
-#
-# %%
-# df create a dummy variable before and after search_engine_changes['mobile.pay.support.Denmark']
-df_dkk = (df.query('currency == "DKK"')
-        .assign(before_mobile_support_denmark=lambda x: np.where(x['clicks_created_at_datetime'] < search_engine_changes['mobile.pay.support.Denmark'], "before_change", "after_change")))
-#%%
-# read data/external/google_trends_interest.csv
-df_google_trends = pd.read_csv("data/external/google_trends_interest.csv")
-
-# left join df_dkk and df_google_trends on clicks_created_at_datetime = date
-df_dkk = df_dkk.assign(clicks_created_at_date=lambda x: x['clicks_created_at_datetime'].dt.date)
-df_dkk = df_dkk.merge(df_google_trends[['date', 'google_trends_DK']], how='left', left_on='clicks_created_at_date', right_on='date', )
-
-
-filter_columns_by_regex(df_dkk, 'trends')
-
-
-# %%
-from pandas.api.types import CategoricalDtype
-from tzlocal import get_localzone
-from datetime import datetime
-
-time_filter_mobile_pay_support_Denmark = search_engine_changes['mobile.pay.support.Denmark'] - 1*(max(df_dkk['clicks_created_at_datetime']) - search_engine_changes['mobile.pay.support.Denmark'])
-# time_filter_mobile_pay_support_Denmark = datetime(2023, 1, 1, 0, 0, 0)
-# dkk add column orders_if_order_bin as boolean from orders_if_order
-df_dkk = df_dkk.assign(orders_if_order_bin=lambda x: x['orders_if_order'] > 0)
-df_dkk = df_dkk.assign(before_mobile_support_denmark_bin=lambda x: x['before_mobile_support_denmark']  == "after_change")
-
-
-# Extracting weekend information
-df_dkk['clicks_created_at_datetime_weekend'] = np.where(df_dkk['clicks_created_at_datetime'].dt.weekday.isin([5, 6]), 1, 0)
-
-# Extracting hour information
-df_dkk['clicks_created_at_datetime_hour'] = df_dkk['clicks_created_at_datetime'].dt.hour
-#%%
-# load df
-x_cols = ['clicks_itinerary_travel_timehours', 
-        #   'clicks_created_at_datetime',
-          'google_trends_DK',
-          'clicks_itinerary_totaldistance',
-          'clicks_mobile', 
-          'clicks_itinerary_sales_price_pax',  
-          "clicks_itinerary_segment_count", 
-          "clicks_created_at_datetime_weekend",
-          "clicks_created_at_datetime_hour",
-          "clicks_itinerary_with_baggage"]
-y_col = 'orders_if_order_bin'
-d_col = "before_mobile_support_denmark_bin"
-
-
-# %%
-# selecting only the columns we need
-df_dkk_select = df_dkk[df_dkk['clicks_created_at_datetime'] > time_filter_mobile_pay_support_Denmark][x_cols + [y_col] + [d_col, 'before_mobile_support_denmark']]
-
-
-# transform all variables that are boolean variables to 0/1
-def bool_to_int(s: pd.Series) -> pd.Series:
-    """Convert the boolean to binary representation, maintain NaN values."""
-    return s.replace({True: 1, False: 0})
-
-df_dkk_select = df_dkk_select.apply(bool_to_int)
-
-from scipy import stats as stats
-def perform_t_test(dataframe, group_var, var_test, group1, group2):
-
-    print("test performed for "+group_var)
-    print("variable tested: "+var_test)
-    # Define the two groups to compare
-    group1_data = dataframe.loc[dataframe[group_var] == group1, var_test]
-    group2_data = dataframe.loc[dataframe[group_var] == group2, var_test]
-
-    # Perform a two-sample t-test assuming unequal variances
-    t_stat, p_value = stats.ttest_ind(group1_data, group2_data, equal_var=False)
-
-    # Calculate the mean and count for each group
-    group1_mean = group1_data.mean()
-    group1_count = group1_data.count()
-    group2_mean = group2_data.mean()
-    group2_count = group2_data.count()
-
-    # Display the results
-    print(group1 + " mean:", round(group1_mean,4), "count:", group1_count)
-    print(group2 + " mean:", round(group2_mean,4), "count:", group2_count)
-    
-    # print("t-statistic:", t_stat)
-    print("p-value:", p_value)
-
-# perform_t_test(df_dkk_select, "before_mobile_support_denmark", "orders_if_order_bin", "before_change", "after_change")
-
-# save df_dkk to csv
-df_dkk_select.to_csv("data/processed/df_dkk_select.csv", index=False)
+modelling_df[d_col]=np.where(modelling_df['clicks_created_at_datetime'] > search_engine_changes['mobile.pay.support.Denmark'], 1, 0).copy()
 
 # %%-----------------------------
 # Splitting the data into training and test sets
 # -------------------------------
 from sklearn.model_selection import train_test_split
-# df_train, df_test = train_test_split(df_dkk_select, test_size=0.2, random_state=42)
+# df_train, df_test = train_test_split(modelling_df, test_size=0.2, random_state=42)
 
-x_train, x_test, y_train, y_test, treat_train, treat_test = train_test_split(df_dkk_select[x_cols], df_dkk_select[y_col], df_dkk_select[d_col],
+X_train, X_test, y_train, y_test, treat_train, treat_test = train_test_split(modelling_df[x_cols], modelling_df[y_col], modelling_df[d_col],
                                                                              test_size=0.5, random_state=42)
+
+# %%-----------------------------
+# Feature selection by variable importance
+# -------------------------------
+# import random forest regressor
+from sklearn.ensemble import RandomForestRegressor
+
+feature_select = RandomForestRegressor(n_estimators=100, max_features=2, max_depth=5, min_samples_leaf=2)
+feature_select_fit = feature_select.fit(X_train, y_train)
+
+#%%
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Get the feature importances
+importances = feature_select_fit.feature_importances_
+
+# Sort the feature importances in descending order
+sorted_idx = np.argsort(importances)[::-1]
+
+# Get the feature names
+feature_names = X_train.columns
+
+# Create a horizontal bar plot of feature importances
+plt.figure(figsize=(10, 6))
+plt.barh(range(X_train.shape[1]), importances[sorted_idx], align='center', color='royalblue')
+plt.yticks(range(X_train.shape[1]), feature_names[sorted_idx])
+plt.ylabel('Feature')
+plt.xlabel('Importance')
+plt.title('Feature Importance')
+
+# Show the plot
+plt.show()
+x_cols_selected = [x_cols[i] for i in range(X_train.shape[1]) if feature_select_fit.feature_importances_[i] > 0.02]
 
 # %%-----------------------------
 # CausalML approach
@@ -181,6 +145,297 @@ plt.hist(uplift_tm_ctrl, bins=100)
 from sklift.metrics import uplift_at_k
 uplift_at_k(y_true=y_test, uplift=uplift_tm_ctrl, treatment=treat_test, strategy='by_group', k=0.3)
 
+
+# %%
+conv_rates_currencies_weekly = (df
+                         # add a column with the week calculated from clicks_created_at_datetime to be the monday of the week
+                .assign(clicks_created_at_week=lambda x: x['clicks_created_at_datetime'].dt.to_period('W').dt.start_time)
+                .groupby(['clicks_created_at_week', 'currency'])['orders_if_order']
+                .agg(orders=('sum'), clicks=('count'))
+                .assign(conv_rate=lambda x: x['orders'] / x['clicks'])
+                .reset_index())
+conv_rates_currencies_weekly.head()
+# %%
+import matplotlib.pyplot as plt
+
+# plot conv_rate_skk_weekly by date
+fig, ax = plt.subplots(figsize=(15, 5))
+# start a y axis from 0
+ax.set_ylim(bottom=0, top=0.12)
+# plot the conversion rate for each currency with separate line plot
+for currency in conv_rates_currencies_weekly['currency'].unique():
+    ax.plot(conv_rates_currencies_weekly[conv_rates_currencies_weekly['currency'] == currency]['clicks_created_at_week'], 
+            conv_rates_currencies_weekly[conv_rates_currencies_weekly['currency'] == currency]['conv_rate'], 
+            label=currency)
+# add legend for each currency
+ax.legend()
+
+# add vertical line for each element in  search_engine_changes
+for change in search_engine_changes:
+    ax.axvline(search_engine_changes[change], color='r', linestyle='--')
+
+
+# add a label for the search engine change named 'mobile.pay.support.Denmark'
+ax.text(search_engine_changes['mobile.pay.support.Denmark'], 0.01, 'mobile.pay.support.Denmark', rotation=90)
+
+# set title and axis labels
+ax.set_title('Weekly Conversion Rates for currencies')
+ax.set_xlabel('Date')
+ax.set_ylabel('Conversion Rate')
+# %%
+# divide clicks_itinerary_sales_price  by clicks_itinerary_sales_price_pax and make a histogram
+plt.hist(
+ df['clicks_itinerary_sales_price'] / df['clicks_itinerary_sales_price_pax']
+    , bins=100
+    , range=(0, 100)
+    , density=True
+    , alpha=0.5
+    , label='clicks_itinerary_sales_price / clicks_itinerary_sales_price_pax'
+)
+
+# %% visualize the results
+
+# visualize histogram of y_pred_train and y_pred_test on one plot with alpha = .5
+plt.hist(y_pred_train, bins=100, range=(0, .4), density=True, alpha=0.5, label='y_pred_train')
+plt.hist(y_pred_test, bins=100, range=(0, .4), density=True, alpha=0.5, label='y_pred_test')
+plt.legend()
+plt.show()
+
+# put y_pred_test to sigmoid function
+y_pred_test_sigmoid = 1 / (1 + np.exp(-y_pred_test))
+y_pred_train_sigmoid = 1 / (1 + np.exp(-y_pred_train))
+y_train_sigmoid = 1 / (1 + np.exp(-y_train))
+y_test_sigmoid = 1 / (1 + np.exp(-y_test))
+# visualize histogram of y_pred_train and y_pred_test on one plot with alpha = .5
+plt.hist(y_pred_train_sigmoid, bins=100, range=(0, 1), density=True, alpha=0.5, label='y_pred_train')
+plt.hist(y_pred_test_sigmoid, bins=100, range=(0, 1), density=True, alpha=0.5, label='y_pred_test')
+plt.hist(y_train_sigmoid, bins=100, range=(0, 1), density=True, alpha=0.5, label='y_train')
+plt.hist(y_test_sigmoid, bins=100, range=(0, 1), density=True, alpha=0.5, label='y_test')
+plt.legend()
+plt.show()
+
+
+#%% Regressor 
+from sklearn.model_selection import RandomizedSearchCV, train_test_split
+from sklearn.ensemble import RandomForestRegressor
+from scipy.stats import randint
+import numpy as np
+import os
+import time
+from tensorboardX import SummaryWriter
+from sklearn.metrics import mean_squared_error, r2_score
+
+modelling_df = modelling_df
+
+# Assuming your features and target are stored in X and y
+X_train, X_test, y_train, y_test = train_test_split(modelling_df[x_cols], modelling_df[y_col], test_size=0.2, random_state=42)
+
+# Create a validation set from the training set
+X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
+
+ml_g = RandomForestRegressor()
+
+param_grid_regressor = {
+    'n_estimators': [100, 200, 300, 400, 500],
+    'max_features': ['auto', 'sqrt', 'log2', 0.25, 0.5, 0.75],
+    'max_depth': [None, 5, 10, 20, 30, 40],
+    'min_samples_split': [2, 5, 10, 15],
+    'min_samples_leaf': [1, 2, 4, 6],
+    'bootstrap': [True, False]
+}
+
+# print number of combinations to test from param_grid_regressor
+print("Number of combinations to test from param_grid_regressor: ", np.prod([len(v) for v in param_grid_regressor.values()]))
+import json
+from sklearn.metrics import mean_squared_error
+import math
+
+def custom_scoring_function_regressor(estimator, X, y):
+    y_pred_train = estimator.predict(X)
+
+    neg_mse_train = -1 * mean_squared_error(y, y_pred_train)  # Use the negative MSE as score to maximize
+    y_pred_val = estimator.predict(X_val)
+    neg_mse_val = -1 * mean_squared_error(y_val, y_pred_val)  # Use the negative MSE as score to maximize
+
+    return neg_mse_val
+
+
+def log_metrics_regressor(random_search, logdir_name, n_iter_search= n_iter_search, eval_func = mean_squared_error):
+    from tqdm import tqdm
+
+    runs_dir = logdir_name + time.strftime("%Y%m%d_%H%M%S")
+    mse_val_list = []
+    log_dir_list = []
+    for i in tqdm(range(n_iter_search)):
+        params = random_search.cv_results_['params'][i]
+        temp_model = RandomForestRegressor(**params)
+        temp_model.fit(X_train, y_train)
+
+        y_pred_val = temp_model.predict(X_val)
+        eval_func_score = eval_func(y_val, y_pred_val)
+
+        metrics_dict = {
+            "mse_train" : -random_search.cv_results_['mean_test_score'][i],
+            "mse_val" : eval_func_score
+            } 
+        mse_val_list.append(eval_func_score)
+
+        log_dir = os.path.join("runs", runs_dir, time.strftime("%H%M%S"))
+        log_dir_list.append(log_dir)
+
+        writer = SummaryWriter(log_dir=log_dir)
+        writer.add_hparams(
+            hparam_dict={key: value for key, value in params.items() if key in param_grid_regressor.keys()},
+            metric_dict=metrics_dict)
+        writer.close()
+    return  {"runs": log_dir_list,"params":random_search.cv_results_['params'], "mse_train": -random_search.cv_results_['mean_test_score'], "mse_val": mse_val_list,}
+    
+
+
+# hide warnings
+import warnings
+warnings.filterwarnings('ignore')
+n_iter_search = 100
+random_search_regressor = RandomizedSearchCV(estimator=ml_g, 
+                                   param_distributions=param_grid_regressor, 
+                                   n_iter=n_iter_search, 
+                                   scoring=custom_scoring_function_regressor, 
+                                   cv=5, n_jobs=-1, verbose=0, random_state=42)
+
+random_search_regressor.fit(X_train, y_train)
+
+rf_regressor_dict = log_metrics_regressor(random_search_regressor, "random_search_regressor_", n_iter_search = n_iter_search)
+
+best_params_regressor = random_search_regressor.cv_results_['params'][np.argmin(rf_regressor_dict['mse_val'])]
+
+# extract parameters where random_search.cv_results_['mean_test_score'] is the lowes
+print("Best parameters found: ", best_params_regressor)
+
+best_ml_g = RandomForestRegressor(**best_params_regressor)
+best_ml_g.fit(X_train, y_train)
+
+# calculate mse on train and test data
+y_pred_train = best_ml_g.predict(X_train)
+y_pred_val = best_ml_g.predict(X_val)
+y_pred_test = best_ml_g.predict(X_test)
+
+mse_train = mean_squared_error(y_train, y_pred_train)
+mse_valid = mean_squared_error(y_val, y_pred_val)
+mse_test = mean_squared_error(y_test, y_pred_test)
+
+print("MSE on train data: ", mse_train)
+print("MSE on validation data: ", mse_valid)
+print("MSE on test data: ", mse_test)
+
+# %%-----------------------------
+# Classification
+
+
+# Assuming your features and target are stored in X and y
+X_train, X_test, d_train, d_test = train_test_split(modelling_df[x_cols], modelling_df[d_col], test_size=0.2, random_state=42)
+
+# Create a validation set from the training set
+X_train, X_val, d_train, d_val = train_test_split(X_train, d_train, test_size=0.1, random_state=42)
+
+
+ml_m = RandomForestClassifier()
+
+param_grid_classifier = {
+    'n_estimators': [100, 200, 300, 400, 500],
+    'max_features': [2, 3, 'sqrt', 4, 6],
+    'max_depth': [3, 5],
+    'min_samples_split': [2, 5, 10, 15, 20],
+    'min_samples_leaf': [1, 2, 4, 6, 8]
+}
+
+# print number of combinations to test from param_grid_classifier
+print("Number of combinations to test from param_grid_classifier: ", np.prod([len(v) for v in param_grid_classifier.values()]))
+import json
+from sklearn.metrics import accuracy_score
+
+def custom_scoring_function_classifier(estimator, X, y):
+    d_pred_train = estimator.predict(X)
+
+    acc_train = accuracy_score(y, d_pred_train)  
+    d_pred_val = estimator.predict(X_val)
+    acc_val = accuracy_score(d_val, d_pred_val) 
+
+    return acc_val
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import os
+import time
+
+def log_metrics_classifier(random_search, logdir_name, n_iter_search= n_iter_search, eval_func=accuracy_score):
+    from tqdm import tqdm
+
+    runs_dir = logdir_name + time.strftime("%Y%m%d_%H%M%S")
+    accuracy_val_list = []
+    log_dir_list = []
+    for i in tqdm(range(n_iter_search)):
+        params = random_search.cv_results_['params'][i]
+        temp_model = RandomForestClassifier(**params)
+        temp_model.fit(X_train, d_train)
+
+        d_pred_val = temp_model.predict(X_val)
+        eval_func_score = eval_func(d_val, d_pred_val)
+
+        metrics_dict = {
+            "accuracy_train": random_search.cv_results_['mean_test_score'][i],
+            "accuracy_val": eval_func_score
+        }
+        accuracy_val_list.append(eval_func_score)
+
+        log_dir = os.path.join("runs", runs_dir, time.strftime("%H%M%S"))
+        log_dir_list.append(log_dir)
+
+        writer = SummaryWriter(log_dir=log_dir)
+        writer.add_hparams(
+            hparam_dict={key: value for key, value in params.items() if key in param_grid_classifier.keys()},
+            metric_dict=metrics_dict)
+        writer.close()
+    return {"runs": log_dir_list, "params": random_search.cv_results_['params'], "accuracy_train": random_search.cv_results_['mean_test_score'], "accuracy_val": accuracy_val_list}
+
+# hide warnings
+import warnings
+warnings.filterwarnings('ignore')
+n_iter_search = 100
+random_search_classifier = RandomizedSearchCV(estimator=ml_m, 
+                                   param_distributions=param_grid_classifier, 
+                                   n_iter=n_iter_search, 
+                                   scoring=custom_scoring_function_classifier, 
+                                   cv=5, n_jobs=-1, verbose=0, random_state=42)
+
+random_search_classifier.fit(X_train, d_train)
+
+rf_classifier_dict = log_metrics_classifier(random_search_classifier, "random_search_classifier_", n_iter_search = n_iter_search)
+
+best_params_classifier = random_search_classifier.cv_results_['params'][np.argmax(rf_classifier_dict['accuracy_val'])]
+
+# extract parameters where random_search.cv_results_['mean_test_score'] is the highest
+print("Best parameters found: ", best_params_classifier)
+
+best_ml_m = RandomForestClassifier(**best_params_classifier)
+best_ml_m.fit(X_train, d_train)
+
+# visualize variable importance in the model
+
+from sklearn.metrics import accuracy_score
+
+# calculate accuracy on train and test data
+d_pred_train = best_ml_m.predict(X_train)
+d_pred_val = best_ml_m.predict(X_val)
+d_pred_test = best_ml_m.predict(X_test)
+
+acc_train = accuracy_score(y_train, d_pred_train)
+acc_valid = accuracy_score(y_val, d_pred_val)
+acc_test = accuracy_score(y_test, d_pred_test)
+
+print("Accuracy on train data: ", acc_train)
+print("Accuracy on validation data: ", acc_valid)
+print("Accuracy on test data: ", acc_test)
+
 # %%-----------------------------
 # DoubleML approach
 # -------------------------------
@@ -194,14 +449,20 @@ uplift_at_k(y_true=y_test, uplift=uplift_tm_ctrl, treatment=treat_test, strategy
 from doubleml import DoubleMLData, DoubleMLPLR, DoubleMLIRM
 
 
+# modelling_df check what is percentage of NAs
+# modelling_df.isna().sum()/len(modelling_df)
+
 # split df into training and test sets
-df_doubleml = DoubleMLData(df_dkk_select
-                           , x_cols = x_cols, y_col = y_col, d_cols = d_col)
+df_doubleml = DoubleMLData(modelling_df, x_cols = x_cols_selected, y_col = y_col, d_cols = d_col)
 
 from doubleml import DoubleMLData, DoubleMLPLR, DoubleMLIRM
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-ml_g = RandomForestRegressor(n_estimators=100, max_features=20, max_depth=5, min_samples_leaf=2)
-ml_m = RandomForestClassifier(n_estimators=100, max_features=20, max_depth=5, min_samples_leaf=2)
+# ml_g = RandomForestRegressor(n_estimators=100, max_depth=3, min_samples_leaf=2,max_features=20)
+# ml_m = RandomForestClassifier(**best_params_classifier)
+best_params_classifier
+ml_g = RandomForestRegressor(n_estimators=100, max_features=2, max_depth=5, min_samples_leaf=2)
+ml_m = RandomForestClassifier(n_estimators=100, max_features=2, max_depth=5, min_samples_leaf=2)
+
 # fit the DoubleMLPLR model
 dml_plr = DoubleMLPLR(
     df_doubleml, 
@@ -212,59 +473,87 @@ dml_plr = DoubleMLPLR(
 dml_plr_fit=dml_plr.fit()
 dml_plr_fit.summary
 # estimate the treatment effect using the DoubleMLPLR model
-
-
+dml_plr_fit.summary
+# dml_plr_fit.plot()
+dml_plr_fit.plot_dml1()
 # %%
-class RandomForestRegressorWithSampleWeight(BaseEstimator, RegressorMixin):
-    def __init__(self, n_estimators=100, max_features=20, max_depth=5, min_samples_leaf=2):
-        self.n_estimators = n_estimators
-        self.max_features = max_features
-        self.max_depth = max_depth
-        self.min_samples_leaf = min_samples_leaf
-        self.model = RandomForestRegressor(n_estimators=n_estimators, max_features=max_features, max_depth=max_depth, min_samples_leaf=min_samples_leaf)
-    
-    def fit(self, X, y, sample_weight=None):
-        if sample_weight is not None:
-            self.model.fit(X, y, sample_weight=sample_weight)
-        else:
-            self.model.fit(X, y)
-        return self
-    
-    def predict(self, X):
-        return self.model.predict(X)
 
+from doubleml import DoubleMLData, DoubleMLPLR, DoubleMLIRM
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
-class RandomForestClassifierWithSampleWeight(BaseEstimator, ClassifierMixin):
-    def __init__(self, n_estimators=100, max_features=20, max_depth=5, min_samples_leaf=2):
-        self.n_estimators = n_estimators
-        self.max_features = max_features
-        self.max_depth = max_depth
-        self.min_samples_leaf = min_samples_leaf
-        self.model = RandomForestClassifier(n_estimators=n_estimators, max_features=max_features, max_depth=max_depth, min_samples_leaf=min_samples_leaf)
-    
-    def fit(self, X, y, sample_weight=None):
-        if sample_weight is not None:
-            self.model.fit(X, y, sample_weight=sample_weight)
-        else:
-            self.model.fit(X, y)
-        return self
-    
-    def predict(self, X):
-        return self.model.predict(X)
-    
-    def predict_proba(self, X):
-        return self.model.predict_proba(X)
+# split df into training and test sets
+df_doubleml = DoubleMLData(modelling_df, x_cols=x_cols, y_col=y_col, d_cols=d_col)
 
-ml_g = RandomForestRegressorWithSampleWeight()
-ml_m = RandomForestClassifierWithSampleWeight()
+# Initialize learners with default parameters
+ml_g = RandomForestRegressor()
+ml_m = RandomForestClassifier()
 
+# fit the DoubleMLPLR model
 dml_plr = DoubleMLPLR(
     df_doubleml, 
     ml_l=ml_g,
     ml_m=ml_m,
     n_folds=5
-    )
+)
+
+
+param_grid_regressor = {
+    'n_estimators': [50, 100, 150, 200],
+    'max_features': ['sqrt', 4, ],
+    'max_depth': [ 3, 5],
+    'min_samples_split': [2, 5, ],
+    'min_samples_leaf': [ 2, 4, 6]
+}
+
+param_grid_classifier = {
+    'n_estimators': [100, 150, 200],
+    'max_features': ['sqrt', 4, 6],
+    'max_depth': [3, 5],
+    'min_samples_split': [2, 5],
+    'min_samples_leaf': [2, 4, 6]
+}
+
+# Define parameter grids for each learner
+param_grids = {
+    'ml_l': param_grid_regressor,
+    'ml_m': param_grid_classifier,
+}
+
+# Tune hyperparameters using randomized search
+dml_plr.tune(
+    param_grids,
+    search_mode='randomized_search',
+    scoring_methods = {
+    "ml_l": "neg_mean_squared_error",
+    "ml_m": "accuracy",
+    },
+    n_iter_randomized_search=40,
+    n_folds_tune=5,
+    n_jobs_cv=-1,  # Use all available CPUs
+    return_tune_res=True
+)
+
+# Fit the model with the tuned hyperparameters
 dml_plr_fit = dml_plr.fit()
+
+# save to pickle 
+import pickle
+# add current date to file name
+with open(f'dml_plr_fit_{time.strftime("%Y%m%d_%H%M%S")}.pkl', 'wb') as f:
+    pickle.dump([
+        dml_plr, dml_plr_fit
+        ], f)
+    
+# Estimate the treatment effect using the DoubleMLPLR model
 dml_plr_fit.summary
+
+dml_plr_fit.get_params(learner='ml_l')
+dml_plr_fit.get_params(learner='ml_m')
+
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import accuracy_score
+dml_plr.evaluate_learners(metric=mean_squared_error)
+
+dml_plr.evaluate_learners(learners = ["ml_m"], metric=accuracy_score)
 
 # %%
