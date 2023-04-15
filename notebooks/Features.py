@@ -32,7 +32,7 @@ clicks_orders_merge = clicks_orders_merge_currency[clicks_orders_merge_currency.
 clicks_orders_merge.shape
 
 # %% [markdown]
-# ### Calculating distances between airports
+# ### Calculating distances between airports    
 
 # %%
 import pandas as pd
@@ -408,6 +408,222 @@ search_changes_conv_rates
 # %%
 # save clicks_orders_merge_currency to csv file
 clicks_orders_merge_currency.to_csv('data/processed/clicks_orders_merge_currency.csv', index=False)
+
+# %%
+import time
+start_time = time.time()
+clicks_orders_merge_currency = pd.read_csv("data/processed/clicks_orders_merge_currency.csv", low_memory=True, parse_dates=['clicks_created_at_datetime', 'orders_created_at_datetime'])
+end_time = time.time()
+elapsed_time = end_time - start_time
+print('Time elapsed (in seconds):', elapsed_time)
+# %%
+
+# fixing orders_if_order variable
+# clicks_orders_merge_currency['orders_if_order'] = np.where(((clicks_orders_merge_currency['orders_if_order']==1) & clicks_orders_merge_currency['orders_cancelled'] == False),1, 0)
+clicks_orders_merge_currency['orders_if_order'] = np.where((clicks_orders_merge_currency['orders_if_order'] == 1) & (clicks_orders_merge_currency['orders_cancelled'] == False), 1, 0)
+
+clicks_orders_merge_currency.groupby(['orders_if_order', 'orders_cancelled']).size()
+#%%
+# save to csv names of columns with first 5 values by value counts for each column
+
+columns_values = [clicks_orders_merge_currency[col].value_counts().head(5).index.tolist() for col in clicks_orders_merge_currency.columns]
+
+# columns_values is a list of lists concatenate them row by row to the dataframe 
+clicks_orders_merge_currency_columns_values = pd.DataFrame(columns_values)
+import openpyxl
+pd.concat([pd.Series(clicks_orders_merge_currency.columns), clicks_orders_merge_currency_columns_values], axis=1).to_excel("data/processed/columns_values.xlsx", index=False)
+
+# %% [markdown]
+# read pickle file search_engine_changes
+import pickle
+search_engine_changes = pickle.load(open("data/processed/search_engine_changes.pkl", "rb"))
+    
+# %%
+# clicks_orders_merge_currency create a dummy variable before and after search_engine_changes['mobile.pay.support.Denmark']
+# clicks_orders_merge_currency_gtrends = (clicks_orders_merge_currency.query('currency == "DKK"')
+#         .assign(before_mobile_support_denmark=lambda x: np.where(x['clicks_created_at_datetime'] < search_engine_changes['mobile.pay.support.Denmark'], "before_change", "after_change")))
+#%%
+# read data/external/google_trends_interest.csv
+google_trends = pd.read_csv("data/external/google_trends_interest.csv")
+
+# left join clicks_orders_merge_currency_gtrends and clicks_orders_merge_currency_google_trends on clicks_created_at_datetime = date
+# clicks_orders_merge_currency_gtrends = clicks_orders_merge_currency_gtrends.assign(clicks_created_at_date=lambda x: x['clicks_created_at_datetime'].dt.date)
+clicks_orders_merge_currency_gtrends = clicks_orders_merge_currency.merge(google_trends, how='left', left_on='clicks_created_at_date', right_on='date', )
+
+
+filter_columns_by_regex(clicks_orders_merge_currency_gtrends, 'trends')
+
+# clicks_orders_merge_currency_gtrends check NAs in google_trends_DK
+clicks_orders_merge_currency_gtrends['google_trends_DK'].isna().sum()
+
+
+# %%
+from pandas.api.types import CategoricalDtype
+from tzlocal import get_localzone
+from datetime import datetime
+import matplotlib.pyplot as plt
+
+# time_filter_mobile_pay_support_Denmark = search_engine_changes['mobile.pay.support.Denmark'] - 1*(max(clicks_orders_merge_currency_gtrends['clicks_created_at_datetime']) - search_engine_changes['mobile.pay.support.Denmark'])
+# time_filter_mobile_pay_support_Denmark = datetime(2023, 1, 1, 0, 0, 0)
+# dkk add column orders_if_order_bin as boolean from orders_if_order
+clicks_orders_merge_currency_gtrends = clicks_orders_merge_currency_gtrends.assign(orders_if_order_bin=lambda x: x['orders_if_order'] == 1)
+# clicks_orders_merge_currency_gtrends = clicks_orders_merge_currency_gtrends.assign(before_mobile_support_denmark_bin=lambda x: x['before_mobile_support_denmark']  == "after_change")
+
+# group by clicks_created_at_date by days of the week and visualize
+clicks_orders_merge_currency_gtrends['clicks_created_at_datetime_weekday'] = clicks_orders_merge_currency_gtrends['clicks_created_at_datetime'].dt.dayofweek + 1
+
+# Extracting weekend information
+clicks_orders_merge_currency_gtrends['clicks_created_at_datetime_weekend'] = np.where(clicks_orders_merge_currency_gtrends['clicks_created_at_datetime_weekday'].isin([6, 7]), 1, 0)
+
+# Extracting hour information
+clicks_orders_merge_currency_gtrends['clicks_created_at_datetime_hour'] = clicks_orders_merge_currency_gtrends['clicks_created_at_datetime'].dt.hour
+
+clicks_orders_merge_currency_gtrends['clicks_passengers_count']  =  clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price'] / clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_pax']
+
+# visualize value counts clicks_orders_merge_currency_gtrends['clicks_created_at_datetime_weekday']
+# clicks_orders_merge_currency_gtrends['clicks_created_at_datetime_weekday'].value_counts().sort_index().plot(kind='bar')
+
+# group by clicks_created_at_datetime_weekday and caluclate ratio of orders_if_order_bin to number of clicks
+clicks_orders_merge_currency_gtrends.groupby(['clicks_created_at_datetime_weekday', 'orders_if_order_bin']).size().unstack().rename(columns={0: 'no_order', 1: 'order'}).assign(ratio=lambda x: x['order'] / (x['order'] + x['no_order']))['ratio'].plot(kind='bar', stacked=True)
+
+# %%
+# Exploring marketing carriers
+nested_carriers = clicks_orders_merge_currency_gtrends['clicks_itinerary_marketing_carriers']
+carriers_unique = [value.replace("'", "") for sublist in nested_carriers for value in sublist[1:-1].split(', ')]
+
+# save to pickle nested_carriers
+import pickle
+pickle.dump(nested_carriers, open("data/interim/nested_carriers.pkl", "wb"))
+
+# %%
+# read pickle file nested_carriers  data/interim/nested_carriers_df.pkl
+import pickle
+nested_carriers_df = pickle.load(open("data/interim/nested_carriers_df.pkl", "rb"))
+nested_carriers_df.shape[0] == clicks_orders_merge_currency_gtrends.shape[0]
+
+nested_carriers_df[nested_carriers_df['nested_carriers_marketing_ratings'].apply(lambda x: any(pd.isnull(i) for i in x))]
+
+# concat nested_carriers_df to clicks_orders_merge_currency_gtrends
+clicks_orders_merge_currency_gtrends = pd.concat([clicks_orders_merge_currency_gtrends, nested_carriers_df], axis=1)
+filter_columns_by_regex(clicks_orders_merge_currency_gtrends, 'carriers')
+#%% [markdown]
+#### Feature engineering
+# clicks_orders_merge_currency_gtrends['ratio_distance_distance'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_totaldistance'] / clicks_orders_merge_currency_gtrends['clicks_passengers_count']
+clicks_orders_merge_currency_gtrends['ratio_sales_price_travel_time'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_pax'] / clicks_orders_merge_currency_gtrends['clicks_itinerary_travel_timehours']
+clicks_orders_merge_currency_gtrends['ratio_distance_passenger'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_totaldistance'] / clicks_orders_merge_currency_gtrends['clicks_passengers_count']
+clicks_orders_merge_currency_gtrends['ratio_travel_time_distance'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_travel_timehours'] / clicks_orders_merge_currency_gtrends['clicks_itinerary_totaldistance']
+clicks_orders_merge_currency_gtrends['ratio_sales_price_distance'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_pax'] / clicks_orders_merge_currency_gtrends['clicks_itinerary_totaldistance']
+clicks_orders_merge_currency_gtrends['carriers_marketing_ratings_count'] = [len(i)for i in clicks_orders_merge_currency_gtrends['nested_carriers_marketing_list']]
+clicks_orders_merge_currency_gtrends['ratio_sales_price_carrier_rating_max'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_pax'] / clicks_orders_merge_currency_gtrends['carriers_marketing_ratings_max']
+clicks_orders_merge_currency_gtrends['ratio_sales_price_carrier_rating_min'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_pax'] / clicks_orders_merge_currency_gtrends['carriers_marketing_ratings_min']
+clicks_orders_merge_currency_gtrends['ratio_sales_price_carrier_rating_avg'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_pax'] / clicks_orders_merge_currency_gtrends['carriers_marketing_ratings_mean']
+clicks_orders_merge_currency_gtrends['ratio_sales_price_carrier_rating_count'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_pax'] / clicks_orders_merge_currency_gtrends['carriers_marketing_ratings_count']
+
+# %%
+# create difference between clicked price and searhc results price
+clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_if_cheapest'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price'] == clicks_orders_merge_currency_gtrends['clicks_result_set_cheapest_price']
+clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_if_best'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price'] == clicks_orders_merge_currency_gtrends['clicks_result_set_best_price']
+clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_if_fastest'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price'] == clicks_orders_merge_currency_gtrends['clicks_result_set_fastest_price']
+
+clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_category'] = np.where(
+    clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_if_cheapest'], 'cheapest',
+    np.where(clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_if_best'], 'best',
+    np.where(clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_if_fastest'], 'fastest',
+'other')))
+
+clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_diff_cheapest'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price'] - clicks_orders_merge_currency_gtrends['clicks_result_set_cheapest_price']
+clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_diff_best'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price'] - clicks_orders_merge_currency_gtrends['clicks_result_set_best_price']
+clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_diff_fastest'] = clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price'] - clicks_orders_merge_currency_gtrends['clicks_result_set_fastest_price']
+
+# df_copy['interaction_google_trends_mobile'] = df_copy[f"google_trends"] * df_copy['clicks_mobile']
+# df_copy['interaction_google_trends_distance'] = df_copy[f"google_trends"] * df_copy['clicks_itinerary_totaldistance']
+# df_copy['interaction_google_trends_passengers'] = df_copy[f"google_trends"] * df_copy['clicks_passengers_count']
+# df_copy['interaction_google_trends_sales_price_pax'] = df_copy[f"google_trends"] * df_copy['clicks_itinerary_sales_price_pax']
+# df_copy['interaction_google_trends_sales_price'] = df_copy[f"google_trends"] * df_copy['clicks_itinerary_sales_price_pax']
+# df_copy['interaction_google_trends_travel_time'] = df_copy[f"google_trends"] * df_copy['clicks_itinerary_travel_timehours']
+# df_copy['interaction_google_trends_direct_flight'] = df_copy[f"google_trends"] * df_copy['clicks_itinerary_direct_flight']
+# df_copy['interaction_google_trends_weekend'] = df_copy[f"google_trends"] * df_copy['clicks_created_at_datetime_weekend']
+# df_copy['interaction_google_trends_baggage'] = df_copy[f"google_trends"] * df_copy['clicks_itinerary_with_baggage']
+# clicks_orders_merge_currency_gtrends['interaction_passengers_weekend'] = clicks_orders_merge_currency_gtrends['clicks_passengers_count'] * clicks_orders_merge_currency_gtrends['clicks_created_at_datetime_weekend']
+# clicks_orders_merge_currency_gtrends['interaction_mobile_direct_flight'] = clicks_orders_merge_currency_gtrends['clicks_mobile'] * clicks_orders_merge_currency_gtrends['clicks_itinerary_direct_flight']
+clicks_orders_merge_currency_gtrends=clicks_orders_merge_currency_gtrends.replace({True: 1, False: 0})
+
+filter_columns_by_regex(clicks_orders_merge_currency_gtrends, 'ratio')
+#%%
+# generate separate datasets by currency
+clicks_orders_merge_currency_gtrends_dkk = clicks_orders_merge_currency_gtrends[clicks_orders_merge_currency_gtrends['clicks_itinerary_currency'] == 'DKK']
+clicks_orders_merge_currency_gtrends_eur = clicks_orders_merge_currency_gtrends[clicks_orders_merge_currency_gtrends['clicks_itinerary_currency'] == 'EUR']
+clicks_orders_merge_currency_gtrends_nok = clicks_orders_merge_currency_gtrends[clicks_orders_merge_currency_gtrends['clicks_itinerary_currency'] == 'NOK']
+clicks_orders_merge_currency_gtrends_sek = clicks_orders_merge_currency_gtrends[clicks_orders_merge_currency_gtrends['clicks_itinerary_currency'] == 'SEK']
+
+df_currency_dict={
+    "DK": clicks_orders_merge_currency_gtrends_dkk,
+    "DE": clicks_orders_merge_currency_gtrends_eur,
+    "NO": clicks_orders_merge_currency_gtrends_nok,
+    "SE": clicks_orders_merge_currency_gtrends_sek
+}
+#%%
+for key in df_currency_dict.keys():
+    df_copy = df_currency_dict[key].copy()
+    df_copy['google_trends'] = df_copy[f"google_trends_{key}"]
+    df_copy = df_copy.drop(columns=filter_columns_by_regex(df_copy, "google_trends_"))
+    df_currency_dict[key] = df_copy
+
+filter_columns_by_regex(df_currency_dict['DK'], "google")
+
+# %% Selecting columns for the model
+x_cols = [
+    'clicks_created_at_datetime', 
+    'clicks_created_at_datetime_hour', 
+    'clicks_created_at_datetime_weekend', 
+    'clicks_itinerary_direct_flight', 
+    'clicks_itinerary_sales_price_pax', 
+    'clicks_itinerary_segment_count', 
+    'clicks_itinerary_totaldistance', 
+    'clicks_itinerary_travel_timehours', 
+    'clicks_itinerary_with_baggage', 
+    'clicks_mobile', 
+    'clicks_passengers_count', 
+    'google_trends', 
+    'ratio_sales_price_travel_time',
+    'ratio_distance_passenger',
+    'ratio_travel_time_distance',
+    'ratio_sales_price_distance',
+    'carriers_marketing_ratings_count',
+    'carriers_marketing_ratings_max',
+    'carriers_marketing_ratings_min',
+    'carriers_marketing_ratings_mean',
+    'carriers_marketing_ratings_count',
+    'ratio_sales_price_carrier_rating_max',
+    'ratio_sales_price_carrier_rating_min',
+    'ratio_sales_price_carrier_rating_avg',
+    'ratio_sales_price_carrier_rating_count',
+    'clicks_itinerary_sales_price_if_cheapest',
+    'clicks_itinerary_sales_price_if_best',
+    'clicks_itinerary_sales_price_if_fastest',
+    'clicks_itinerary_sales_price_category',
+    'clicks_itinerary_sales_price_diff_cheapest',
+    'clicks_itinerary_sales_price_diff_best',
+    'clicks_itinerary_sales_price_diff_fastest',
+    ]
+y_col = 'orders_if_order'
+
+# select columns for the model with x_cols, y_col and d_cols
+for key in df_currency_dict.keys():
+    df_copy = df_currency_dict[key].copy()
+    df_currency_dict[key] = df_copy[x_cols + [y_col]]
+
+#%%
+# save each df from df_currency_dict to separate pickle file
+import pickle
+for key in df_currency_dict.keys():
+    df_copy = df_currency_dict[key].copy()
+    filename = f"data/processed/modelling_dataset_{key}.pkl"
+    with open(filename, 'wb') as f:
+        pickle.dump(df_copy, f)
+
+
+# %%
 # save to pickle file search_engine_changes
 import pickle
 with open('data/processed/search_engine_changes.pkl', 'wb') as f:
