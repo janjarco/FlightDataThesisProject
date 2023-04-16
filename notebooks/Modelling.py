@@ -27,54 +27,85 @@ modelling_datasets={new_keys[i]: modelling_datasets[j] for i, j in enumerate(mod
 #%%
 # load df
 x_cols = [
+    # 'clicks_created_at_datetime', 
+    'clicks_created_at_datetime_hour', 
+    'clicks_created_at_datetime_weekend', 
+    'clicks_itinerary_direct_flight', 
+    'clicks_itinerary_sales_price_pax', 
+    'clicks_itinerary_segment_count', 
+    'clicks_itinerary_totaldistance', 
     'clicks_itinerary_travel_timehours', 
-    'clicks_itinerary_totaldistance',
-    'clicks_passengers_count',
-    'google_trends',
+    'clicks_itinerary_with_baggage', 
     'clicks_mobile', 
-    'clicks_itinerary_sales_price_pax',  
-    "clicks_itinerary_segment_count", 
-    "clicks_created_at_datetime_weekend",
-    "clicks_created_at_datetime_hour",
-    "clicks_itinerary_with_baggage", 
-    "clicks_itinerary_direct_flight",
-    "interaction_google_trends_distance",
-    "interaction_google_trends_passengers",
-    "interaction_google_trends_sales_price_pax",
-    "interaction_google_trends_sales_price",
-    "interaction_google_trends_travel_time",
-    "interaction_google_trends_direct_flight",
-    "interaction_google_trends_weekend",
-    "interaction_google_trends_baggage",
-    "ratio_sales_price_travel_time",
-    "ratio_distance_passenger",
-    "ratio_travel_time_distance",
-    "ratio_sales_price_distance",
-    "interaction_passengers_weekend",
-    "interaction_mobile_direct_flight",
+    'clicks_passengers_count', 
+    'google_trends', 
+    'ratio_sales_price_travel_time',
+    'ratio_distance_passenger',
+    'ratio_travel_time_distance',
+    'ratio_sales_price_distance',
+    'carriers_marketing_ratings_count',
+    'carriers_marketing_ratings_max',
+    'carriers_marketing_ratings_min',
+    'carriers_marketing_ratings_mean',
+    'ratio_sales_price_carrier_rating_max',
+    'ratio_sales_price_carrier_rating_min',
+    'ratio_sales_price_carrier_rating_avg',
+    'ratio_sales_price_carrier_rating_count',
+    'clicks_itinerary_sales_price_if_cheapest',
+    'clicks_itinerary_sales_price_if_best',
+    'clicks_itinerary_sales_price_if_fastest',
+    # 'clicks_itinerary_sales_price_category',
+    'clicks_itinerary_sales_price_diff_cheapest',
+    'clicks_itinerary_sales_price_diff_best',
+    'clicks_itinerary_sales_price_diff_fastest',
     ]
-y_col = 'orders_if_order_bin'
+y_col = 'orders_if_order'
 d_col = "mobile_support_denmark"
 
 modelling_df = modelling_datasets["DKK"]
+# drop duplicated columns
+modelling_df = modelling_df.loc[:,~modelling_df.columns.duplicated()]
 
 # read pickle file search_engine_changes
 import pickle
 search_engine_changes = pickle.load(open("data/processed/search_engine_changes.pkl", "rb"))
 
 time_filter_mobile_pay_support_Denmark = search_engine_changes['mobile.pay.support.Denmark'] - 1*(max(modelling_df['clicks_created_at_datetime']) - search_engine_changes['mobile.pay.support.Denmark'])
-modelling_df = modelling_df[modelling_df['clicks_created_at_datetime'] > time_filter_mobile_pay_support_Denmark]
+modelling_df = modelling_df[modelling_df['clicks_created_at_datetime'] > time_filter_mobile_pay_support_Denmark].copy()
 
 modelling_df[d_col]=np.where(modelling_df['clicks_created_at_datetime'] > search_engine_changes['mobile.pay.support.Denmark'], 1, 0).copy()
+# %%
+# COvariates axploration
+# for all the variables in x_colsm list plot density plot with grouping by d_col
+import matplotlib.pyplot as plt
+import seaborn as sns
+for col in x_cols:
+    fig, ax = plt.subplots()
+    sns.kdeplot(modelling_df.loc[modelling_df[d_col] == 0, col], label = 'control', ax=ax)
+    sns.kdeplot(modelling_df.loc[modelling_df[d_col] == 1, col], label = 'treatment', ax=ax)
+    plt.show()
+
+# %%
+# for all the variables in x_colsm list plot density plot with grouping by d_col
+import matplotlib.pyplot as plt
+import seaborn as sns
+for col in x_cols:
+    fig, ax = plt.subplots()
+    sns.kdeplot(modelling_df.loc[modelling_df[y_col] == 0, col], label = 'control', ax=ax)
+    sns.kdeplot(modelling_df.loc[modelling_df[y_col] == 1, col], label = 'treatment', ax=ax)
+    plt.show()
 
 # %%-----------------------------
 # Splitting the data into training and test sets
 # -------------------------------
 from sklearn.model_selection import train_test_split
 # df_train, df_test = train_test_split(modelling_df, test_size=0.2, random_state=42)
+no_nas_before_drop = modelling_df.shape[0]
+modelling_df = modelling_df.dropna()
+modelling_df.shape[0] / no_nas_before_drop
 
 X_train, X_test, y_train, y_test, treat_train, treat_test = train_test_split(modelling_df[x_cols], modelling_df[y_col], modelling_df[d_col],
-                                                                             test_size=0.5, random_state=42)
+                                                                             test_size=0.8, random_state=42)
 
 # %%-----------------------------
 # Feature selection by variable importance
@@ -86,68 +117,185 @@ feature_select = RandomForestRegressor(n_estimators=100, max_features=2, max_dep
 feature_select_fit = feature_select.fit(X_train, y_train)
 
 #%%
-import numpy as np
-import matplotlib.pyplot as plt
+def plot_feature_importances(model, df_train):
+    import numpy as np
+    import matplotlib.pyplot as plt
 
-# Get the feature importances
-importances = feature_select_fit.feature_importances_
+    # Get the feature importances
+    importances = model.feature_importances_
 
-# Sort the feature importances in descending order
-sorted_idx = np.argsort(importances)[::-1]
+    # Sort the feature importances in descending order
+    sorted_idx = np.argsort(importances)[::-1]
 
-# Get the feature names
-feature_names = X_train.columns
+    # Get the feature names
+    feature_names = df_train.columns
 
-# Create a horizontal bar plot of feature importances
-plt.figure(figsize=(10, 6))
-plt.barh(range(X_train.shape[1]), importances[sorted_idx], align='center', color='royalblue')
-plt.yticks(range(X_train.shape[1]), feature_names[sorted_idx])
-plt.ylabel('Feature')
-plt.xlabel('Importance')
-plt.title('Feature Importance')
+    # Create a horizontal bar plot of feature importances
+    plt.figure(figsize=(10, 6))
+    plt.barh(range(df_train.shape[1]), importances[sorted_idx], align='center', color='royalblue')
+    plt.yticks(range(df_train.shape[1]), feature_names[sorted_idx])
+    plt.ylabel('Feature')
+    plt.xlabel('Importance')
+    plt.title('Feature Importance')
 
-# Show the plot
-plt.show()
+    # Show the plot
+    plt.show()
+
+plot_feature_importances(feature_select_fit, X_train)
+
 x_cols_selected = [x_cols[i] for i in range(X_train.shape[1]) if feature_select_fit.feature_importances_[i] > 0.02]
+print(f"selected {len(x_cols_selected)} out of {len(x_cols)}")
 
 # %%-----------------------------
-# CausalML approach
-# scikit-uplift https://www.uplift-modeling.com/en/latest/api/models/TwoModels.html
+# Shapley values
+def shapley_values(model, df_train):
+    import shap
+
+    # Create an explainer object using the random forest regressor and training data
+    explainer = shap.explainers.Tree(model, df_train)
+
+    # Compute Shapley values for the entire dataset
+    shap_object = explainer(df_train)
+    
+    return shap_object
+def plot_shapley_values(shap_object, show_bar=False, show_waterfall=False, show_beeswarm=False):
+    import shap
+    import matplotlib.pyplot as plt
+
+
+    if show_bar:
+        shap.plots.bar(shap_object*100, max_display=len(shap_object.feature_names))
+        plt.show()
+    # Create a summary plot of the Shapley values
+    if show_waterfall:
+        shap.plots.waterfall(shap_object[0], max_display=len(shap_object.feature_names))
+        plt.show()
+
+    # summarize the effects of all the features
+    if show_beeswarm:
+        shap.plots.beeswarm(shap_object, max_display=len(shap_object.feature_names), )
+        plt.show()
+#%%
+shap_object = shapley_values(feature_select_fit, X_train, )
+
+plot_shapley_values(shap_object, show_bar=True, show_waterfall=True, show_beeswarm=True)
+
+
+# %%-----------------------------
+# Shapley selection
 # -------------------------------
 
-# import approach
-from sklift.models import TwoModels
-# import any estimator adheres to scikit-learn conventions
-from catboost import CatBoostClassifier
+# create function shap values df
+def shap_values_df(shap_object, df_train):
+    import numpy as np
+    import pandas as pd
+    # Compute SHAP values for your dataset
+    shap_values = shap_object.values
 
-estimator_trmnt = CatBoostClassifier(silent=True, thread_count=2, random_state=42)
-estimator_ctrl = CatBoostClassifier(silent=True, thread_count=2, random_state=42)
+    # Compute the mean absolute SHAP values for each feature
+    mean_abs_shap_values = np.abs(shap_values).mean(axis=0)
 
-# define approach
-tm_ctrl = TwoModels(
-    estimator_trmnt=estimator_trmnt,
-    estimator_ctrl=estimator_ctrl,
-    method='ddr_control'
-)
+    # Create a DataFrame with feature names and SHAP values
+    shap_df = pd.DataFrame({'feature': df_train.columns, 'mean_abs_shap': mean_abs_shap_values}).sort_values(by='mean_abs_shap', ascending=False).reset_index(drop=True)
+    shap_df['cumulative_importance'] = shap_df['mean_abs_shap'].cumsum() / shap_df['mean_abs_shap'].sum()
+    # Sort the DataFrame based on the SHAP values
+    # shap_df = shap_df.sort_values(by='feature', ascending=True)
+    return shap_df
 
-# fit the models
-tm_ctrl = tm_ctrl.fit(
-    x_train, y_train, treat_train,
-    # estimator_trmnt_fit_params={'cat_features': },
-    # estimator_ctrl_fit_params={'cat_features': }
-)
-uplift_tm_ctrl = tm_ctrl.predict(x_test)  # predict uplift
-# uplift_tm_ctrl is an array, draw an histogram
+shap_df = shap_values_df(shap_object, X_train)
+
 import matplotlib.pyplot as plt
-plt.hist(uplift_tm_ctrl, bins=100)
 
-# extract summary statistics for the uplift_tm_ctrl
-from sklift.metrics import uplift_at_k
-uplift_at_k(y_true=y_test, uplift=uplift_tm_ctrl, treatment=treat_test, strategy='by_group', k=0.3)
+plt.figure(figsize=(12, 6))
+plt.barh(shap_df['feature'], shap_df['mean_abs_shap'])  # Change from plt.bar to plt.barh
+plt.gca().invert_yaxis()  # Invert the y-axis order
+plt.xlabel('Mean Absolute SHAP Value')
+plt.ylabel('Features')
+plt.title('Feature Importance Based on SHAP Values')
+plt.show()
+
+# %%-----------------------------
+# Correlation plot between features
+# -------------------------------
+def plot_correlation_matrix(df):
+    import plotly.graph_objects as go
+    import plotly.express as px
+
+    # Create a correlation matrix
+    corr_matrix = df[sorted(df.columns.values)].corr()
+
+    # Create a mask to display only the lower triangle of the matrix
+    corr_matrix_tril = np.tril(np.ones_like(corr_matrix)) * corr_matrix
+
+    # Create a custom diverging colormap
+    cmap = sns.diverging_palette(230, 20, as_cmap=True)
+
+    # Create a heatmap without annotations
+    fig = go.Figure(go.Heatmap(
+        z=corr_matrix_tril.values,
+        x=list(corr_matrix_tril.columns),
+        y=list(corr_matrix_tril.index),
+        colorscale=px.colors.sequential.RdBu,
+        # display values in the heatmap
+        text=corr_matrix_tril.values.round(2),
+        hovertemplate='(%{y}, %{x}): %{z:.2f}<extra></extra>'
+    ))
+
+    # Customize the layout
+    fig.update_layout(
+        title='Correlation Heatmap',
+        xaxis=dict(title='Features', side='bottom', ticks='outside'),
+        yaxis=dict(title='Features', ticks='outside', autorange='reversed'),
+        margin=dict(t=50, l=50, b=100),
+        width=1000,
+        height=800
+    )
+
+    fig.show()
+
+plot_correlation_matrix(X_train)
+
+# %%-----------------------------
+# to exclude features with high correlation b etween each other
+feature_to_exclude = [
+    'carriers_marketing_ratings_max',
+    'carriers_marketing_ratings_min',
+
+    'ratio_sales_price_carrier_rating_avg', 
+    'ratio_sales_price_carrier_rating_min'
+    ]
+
+# Feature selection by shapley values
+from sklearn.ensemble import RandomForestRegressor
+
+# drop columns from X_train that are in feature_to_exclude
+X_train_updated = X_train.drop(feature_to_exclude, axis=1)
+
+feature_select_update = RandomForestRegressor(n_estimators=100, max_features=2, max_depth=5, min_samples_leaf=2)
+feature_select_update_fit = feature_select_update.fit(X_train_updated, y_train)
+
+plot_feature_importances(feature_select_update_fit, X_train_updated)
+
+shap_values_update = shapley_values(feature_select_update_fit, X_train_updated)
+shap_df_update = shap_values_df(shap_values_update, X_train_updated)
 
 
+plot_shapley_values(shap_values_update, show_bar=False, show_waterfall=False, show_beeswarm=True)
+ 
+# Set the cutoff threshold
+threshold = 1.0
+
+# Find the index of the first feature that meets the threshold
+cutoff_index = shap_df_update[shap_df_update['cumulative_importance'] >= threshold].index[0]
+
+# Select features that meet the threshold
+selected_features = shap_df_update.iloc[:cutoff_index+1]['feature'].tolist()
 # %%
-conv_rates_currencies_weekly = (df
+X_train, X_test, y_train, y_test, treat_train, treat_test = train_test_split(modelling_df[selected_features], modelling_df[y_col], modelling_df[d_col],
+                                                                             test_size=0.2, random_state=42)
+
+# %% conv_rates_currencies_weekly
+conv_rates_currencies_weekly = (modelling_datasets['DKK']
                          # add a column with the week calculated from clicks_created_at_datetime to be the monday of the week
                 .assign(clicks_created_at_week=lambda x: x['clicks_created_at_datetime'].dt.to_period('W').dt.start_time)
                 .groupby(['clicks_created_at_week', 'currency'])['orders_if_order']
@@ -182,8 +330,7 @@ ax.text(search_engine_changes['mobile.pay.support.Denmark'], 0.01, 'mobile.pay.s
 ax.set_title('Weekly Conversion Rates for currencies')
 ax.set_xlabel('Date')
 ax.set_ylabel('Conversion Rate')
-# %%
-# divide clicks_itinerary_sales_price  by clicks_itinerary_sales_price_pax and make a histogram
+# %% divide clicks_itinerary_sales_price  by clicks_itinerary_sales_price_pax and make a histogram
 plt.hist(
  df['clicks_itinerary_sales_price'] / df['clicks_itinerary_sales_price_pax']
     , bins=100
@@ -327,8 +474,8 @@ print("MSE on train data: ", mse_train)
 print("MSE on validation data: ", mse_valid)
 print("MSE on test data: ", mse_test)
 
-# %%-----------------------------
-# Classification
+# %% Classification
+
 
 
 # Assuming your features and target are stored in X and y
@@ -459,30 +606,37 @@ from doubleml import DoubleMLData, DoubleMLPLR, DoubleMLIRM
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 # ml_g = RandomForestRegressor(n_estimators=100, max_depth=3, min_samples_leaf=2,max_features=20)
 # ml_m = RandomForestClassifier(**best_params_classifier)
-best_params_classifier
-ml_g = RandomForestRegressor(n_estimators=100, max_features=2, max_depth=5, min_samples_leaf=2)
-ml_m = RandomForestClassifier(n_estimators=100, max_features=2, max_depth=5, min_samples_leaf=2)
+
+ml_g = RandomForestRegressor(n_estimators=100,min_samples_split=2,min_samples_leaf=4,max_features='sqrt',max_depth=3)
+ml_m = RandomForestClassifier(n_estimators=100,min_samples_split= 2,min_samples_leaf= 6,max_features= 6,max_depth= 3)
+
+# import xgboost classifier and regressor
+from xgboost import XGBClassifier, XGBRegressor
+# declare sample xgboost regressor with sample parameters
+xgb_regressor = XGBRegressor( n_estimators=100, max_depth=5, min_child_weight=2, learning_rate=0.01, subsample=0.8, colsample_bytree=0.8, gamma=0.1, reg_lambda=1, reg_alpha=0, objective='reg:squarederror', random_state=42 )
+# declare sample xgboost classifier with sample parameters
+xgb_classifier = XGBClassifier( n_estimators=100, max_depth=5, min_child_weight=2, learning_rate=0.01, subsample=0.8, colsample_bytree=0.8, gamma=0.1, reg_lambda=1, reg_alpha=0, objective='binary:logistic', random_state=42 )
+
 
 # fit the DoubleMLPLR model
 dml_plr = DoubleMLPLR(
     df_doubleml, 
-    ml_l=ml_g,
-    ml_m=ml_m,
+    ml_l=xgb_regressor,
+    ml_m=xgb_classifier,
     n_folds=5 
     )
 dml_plr_fit=dml_plr.fit()
 dml_plr_fit.summary
 # estimate the treatment effect using the DoubleMLPLR model
-dml_plr_fit.summary
 # dml_plr_fit.plot()
-dml_plr_fit.plot_dml1()
-# %%
+
+# %% Double ML Random Forrest hyperparameter tuning
 
 from doubleml import DoubleMLData, DoubleMLPLR, DoubleMLIRM
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
 # split df into training and test sets
-df_doubleml = DoubleMLData(modelling_df, x_cols=x_cols, y_col=y_col, d_cols=d_col)
+df_doubleml = DoubleMLData(modelling_df, x_cols=x_cols_selected, y_col=y_col, d_cols=d_col)
 
 # Initialize learners with default parameters
 ml_g = RandomForestRegressor()
@@ -499,16 +653,16 @@ dml_plr = DoubleMLPLR(
 
 param_grid_regressor = {
     'n_estimators': [50, 100, 150, 200],
-    'max_features': ['sqrt', 4, ],
-    'max_depth': [ 3, 5],
+    'max_features': [3, 'sqrt', ],
+    'max_depth': [ 3, 4, 5],
     'min_samples_split': [2, 5, ],
     'min_samples_leaf': [ 2, 4, 6]
 }
 
 param_grid_classifier = {
     'n_estimators': [100, 150, 200],
-    'max_features': ['sqrt', 4, 6],
-    'max_depth': [3, 5],
+    'max_features': [3, 'sqrt', 6],
+    'max_depth': [3, 4, 5],
     'min_samples_split': [2, 5],
     'min_samples_leaf': [2, 4, 6]
 }
@@ -530,7 +684,7 @@ dml_plr.tune(
     n_iter_randomized_search=40,
     n_folds_tune=5,
     n_jobs_cv=-1,  # Use all available CPUs
-    return_tune_res=True
+    return_tune_res=True,
 )
 
 # Fit the model with the tuned hyperparameters
@@ -548,12 +702,179 @@ with open(f'dml_plr_fit_{time.strftime("%Y%m%d_%H%M%S")}.pkl', 'wb') as f:
 dml_plr_fit.summary
 
 dml_plr_fit.get_params(learner='ml_l')
-dml_plr_fit.get_params(learner='ml_m')
+dml_plr_fit.get_params(learner='ml_m')['mobile_support_denmark'][0][0]
 
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import accuracy_score
 dml_plr.evaluate_learners(metric=mean_squared_error)
 
 dml_plr.evaluate_learners(learners = ["ml_m"], metric=accuracy_score)
+
+# 
+# %% Uplift modelling from scikit-uplift
+# -------------------------------------
+def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
+    # declare sample xgboost regressor with sample parameters
+    xgb_classifier_params = {
+        "n_estimators":100, 
+        "max_depth":5, 
+        "min_child_weight":2, 
+        "learning_rate":0.01, 
+        "subsample":0.8, 
+        "colsample_bytree":0.8, 
+        "gamma":0.1, 
+        "reg_lambda":1, 
+        "reg_alpha":0, 
+        "objective":'binary:logistic', 
+        "random_state":42,
+    }
+    xgb_regressor_params = {
+        "n_estimators":100, 
+        "max_depth":5, 
+        "min_child_weight":2, 
+        "learning_rate":0.01, 
+        "subsample":0.8, 
+        "colsample_bytree":0.8, 
+        "gamma":0.1, 
+        "reg_lambda":1, 
+        "reg_alpha":0, 
+        "objective":'reg:squarederror', 
+        "random_state":42,
+    }
+    
+    models_results = {
+        'approach': [],
+        'uplift': []
+    }
+
+    # Double ML
+    # fit the DoubleMLPLR model
+
+    from doubleml import DoubleMLData, DoubleMLPLR, DoubleMLIRM
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+
+    # split df into training and test sets
+    df_doubleml = DoubleMLData(pd.concat([X_train, y_train, treat_train], axis=1), x_cols=selected_features, y_col=y_col, d_cols=d_col)
+
+
+    dml_plr = DoubleMLPLR(df_doubleml, 
+                          ml_l=XGBRegressor(**xgb_regressor_params), 
+                          ml_m=XGBClassifier(**xgb_classifier_params), 
+                          n_folds=5 )
+    dml_plr=dml_plr.fit()
+    dm_score = dml_plr.summary['coef'].values[0]
+
+    models_results['approach'].append('DoubleML')
+    models_results['uplift'].append(dm_score)
+
+    # Solo Model
+    from sklift.metrics import uplift_at_k
+    from sklift.viz import plot_uplift_preds
+    from sklift.models import SoloModel
+
+    sm = SoloModel(XGBClassifier(**xgb_classifier_params))
+    sm = sm.fit(X_train, y_train, treat_train)
+
+    uplift_sm = sm.predict(X_test)
+
+    sm_score = uplift_at_k(y_true=y_test, uplift=uplift_sm, treatment=treat_test, strategy='by_group', k=0.3)
+
+    models_results['approach'].append('SoloModel')
+    models_results['uplift'].append(sm_score)
+
+    # get conditional probabilities (predictions) of performing the target action 
+    # during interaction for each object
+    sm_trmnt_preds = sm.trmnt_preds_
+    # And conditional probabilities (predictions) of performing the target action 
+    # without interaction for each object
+    sm_ctrl_preds = sm.ctrl_preds_
+
+    # draw the probability (predictions) distributions and their difference (uplift)
+    plot_uplift_preds(trmnt_preds=sm_trmnt_preds, ctrl_preds=sm_ctrl_preds)
+
+    # sm_fi = pd.DataFrame({
+    #     'feature_name': sm.estimator.feature_names_,
+    #     'feature_score': sm.estimator.feature_importances_
+    # }).sort_values('feature_score', ascending=False).reset_index(drop=True)
+
+    # Class Transformation
+
+    from sklift.models import ClassTransformation
+
+    ct = ClassTransformation(XGBClassifier(**xgb_classifier_params))
+    ct = ct.fit(X_train, y_train, treat_train)
+
+    uplift_ct = ct.predict(X_test)
+
+    ct_score = uplift_at_k(y_true=y_test, uplift=uplift_ct, treatment=treat_test, strategy='by_group', k=0.3)
+
+    # plot_uplift_preds(trmnt_preds=ct.trmnt_preds_, ctrl_preds=ct.ctrl_preds_)
+
+    models_results['approach'].append('ClassTransformation')
+    models_results['uplift'].append(ct_score)
+
+    # Two models
+    import importlib
+    import sklift.models
+    importlib.reload(sklift.models)
+
+
+    import sklift.models.models
+    importlib.reload(sklift.models.models)
+    from sklift.models import TwoModels
+    # Two models treatment
+
+    tm_trmnt = TwoModels(
+        estimator_trmnt=XGBClassifier(**xgb_classifier_params), 
+        estimator_ctrl=XGBClassifier(**xgb_classifier_params), 
+        method='ddr_treatment'
+    )
+    tm_trmnt = tm_trmnt.fit(X_train, y_train, treat_train)
+
+    uplift_tm_trmnt = tm_trmnt.predict(X_test)
+
+    tm_trmnt_score = uplift_at_k(y_true=y_test, uplift=uplift_tm_trmnt, treatment=treat_test, strategy='by_group', k=0.3)
+
+    models_results['approach'].append('TwoModels_ddr_treatment')
+    models_results['uplift'].append(tm_trmnt_score)
+    
+    plot_uplift_preds(trmnt_preds=tm_trmnt.trmnt_preds_, ctrl_preds=tm_trmnt.ctrl_preds_)
+
+    # Two models control
+    tm_ctrl = TwoModels(
+        estimator_trmnt=XGBClassifier(**xgb_classifier_params), 
+        estimator_ctrl=XGBClassifier(**xgb_classifier_params), 
+        method='ddr_control'
+    )
+    tm_ctrl = tm_ctrl.fit(X_train, y_train, treat_train)
+
+    uplift_tm_ctrl = tm_ctrl.predict(X_test)
+
+    tm_ctrl_score = uplift_at_k(y_true=y_test, uplift=uplift_tm_ctrl, treatment=treat_test, strategy='by_group', k=0.3)
+
+    models_results['approach'].append('TwoModels_ddr_control')
+    models_results['uplift'].append(tm_ctrl_score)
+
+    plot_uplift_preds(trmnt_preds=tm_ctrl.trmnt_preds_, ctrl_preds=tm_ctrl.ctrl_preds_)
+
+
+
+    return pd.DataFrame(models_results), dml_plr, sm, ct, tm_trmnt, tm_ctrl
+
+models_results, dml_plr, sm, ct, tm_trmnt, tm_ctrl  = uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test)
+
+print(models_results)
+
+
+uplift_sm = sm.predict(X_test)
+uplift_ct = ct.predict(X_test)
+
+# statistical test if its bigger than 0
+from scipy import stats
+
+# generate numpy array with 0 of number of rows in X_test
+zero_array = np.zeros(X_test.shape[0])
+stats.ttest_ind(uplift_ct, zero_array, equal_var=False)
+stats.ttest_ind(uplift_sm, zero_array, equal_var=False)
 
 # %%

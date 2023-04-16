@@ -87,6 +87,9 @@ target/
 # catboost models ignore
 /catboost_info/
 
+# tensorboard runs
+/runs/
+
 
 # Mac OS-specific storage files
 .DS_Store

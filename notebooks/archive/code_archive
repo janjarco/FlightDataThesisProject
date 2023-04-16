@@ -1,0 +1,53 @@
+
+# Create a validation set from the training set
+X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
+
+
+def log_metrics(writer,  metrics, estimator):
+    writer.add_hparams(
+        hparam_dict={key: value for key, value in estimator.get_params().items() if key in param_grid_regressor.keys()},
+        metric_dict=metrics)
+
+def custom_score(estimator, X, y_true):
+    y_pred_train = estimator.predict(X_train)
+    y_pred_val = estimator.predict(X_val)
+
+    mse_train = mean_squared_error(y_train, y_pred_train)
+    r2_train = r2_score(y_train, y_pred_train)
+
+    mse_val = mean_squared_error(y_val, y_pred_val)
+    r2_val = r2_score(y_val, y_pred_val)
+
+    # Log metrics to TensorBoard
+    log_dir = os.path.join("runs", runs_dir, time.strftime("%H%M%S"))
+    writer = SummaryWriter(log_dir=log_dir)
+    log_metrics(writer, {
+        'mse_train': mse_train, 'r2_train': r2_train,
+        'mse_val': mse_val, 'r2_val': r2_val }, estimator)
+    writer.close()
+
+    return mse_val
+
+runs_dir = "runs_regressor_" + time.strftime("%Y%m%d_%H%M%S")
+
+# hide warnings
+import warnings
+warnings.filterwarnings('ignore')
+
+random_search = RandomizedSearchCV(estimator=ml_g, param_distributions=param_grid_regressor, n_iter=100, scoring=custom_score, cv=None, n_jobs=-1, verbose=2, random_state=42)
+random_search.fit(X_train, y_train)
+
+# extract best parameters from random search by using the 
+random_search.cv_results_['params'][np.argmin(random_search.cv_results_['mean_test_score'])]
+
+best_params = random_search.best_params_
+print("Best parameters found: ", best_params)
+
+best_ml_g = RandomForestRegressor(**best_params)
+best_ml_g.fit(X_train, y_train)
+
+train_score = best_ml_g.score(X_train, y_train)
+test_score = best_ml_g.score(X_test, y_test)
+
+print("Training score: ", train_score)
+print("Testing score: ", test_score)
