@@ -60,20 +60,53 @@ x_cols = [
     'clicks_itinerary_sales_price_diff_fastest',
     ]
 y_col = 'orders_if_order'
-d_col = "mobile_support_denmark"
 
-modelling_df = modelling_datasets["DKK"]
+modelling_df_full = modelling_datasets["DKK"]
 # drop duplicated columns
-modelling_df = modelling_df.loc[:,~modelling_df.columns.duplicated()]
+modelling_df_full = modelling_df_full.loc[:,~modelling_df_full.columns.duplicated()]
 
+# %% Splitting the data into training and test sets with filter by search engine changes
+# -------------------------------
 # read pickle file search_engine_changes
 import pickle
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+
 search_engine_changes = pickle.load(open("data/processed/search_engine_changes.pkl", "rb"))
 
-time_filter_mobile_pay_support_Denmark = search_engine_changes['mobile.pay.support.Denmark'] - 1*(max(modelling_df['clicks_created_at_datetime']) - search_engine_changes['mobile.pay.support.Denmark'])
-modelling_df = modelling_df[modelling_df['clicks_created_at_datetime'] > time_filter_mobile_pay_support_Denmark].copy()
+def treatment_variable_generation(modelling_df, dates_dictionary, dates_dictionary_key, days_before, days_after):
+    modelling_df_filter = modelling_df.copy()
+    del modelling_df
+    month_before = dates_dictionary[dates_dictionary_key] + timedelta(days=-days_before)
+    month_after = dates_dictionary[dates_dictionary_key] + timedelta(days=days_after)
 
-modelling_df[d_col]=np.where(modelling_df['clicks_created_at_datetime'] > search_engine_changes['mobile.pay.support.Denmark'], 1, 0).copy()
+    def check_date_range(date):
+        if month_before < date <= dates_dictionary[dates_dictionary_key]:
+            return 0
+        elif dates_dictionary[dates_dictionary_key] < date <= month_after:
+            return 1
+        else:
+            return None
+    treatment_var_name = "treatment_"+dates_dictionary_key
+    modelling_df_filter[treatment_var_name] = modelling_df_filter['clicks_created_at_datetime'].apply(check_date_range)
+    # print(modelling_df_filter.shape)
+    # filter modelling if treatment variable is not null
+    modelling_df_filter = modelling_df_filter[modelling_df_filter[treatment_var_name].notnull()]
+    # print(modelling_df_filter.shape)
+    # count na values for each column
+    modelling_df_filter = modelling_df_filter.dropna()
+    # print(modelling_df_filter.isna().sum())
+    return modelling_df_filter, treatment_var_name
+
+modelling_df, treatment_var_name = treatment_variable_generation(modelling_datasets['DKK'], search_engine_changes, "hack.bagprice.override.Altea.FLX", 30, 30)
+
+# %%
+# Splitting the data into training and test sets
+from sklearn.model_selection import train_test_split
+
+# split the data into training and test sets
+X_train, X_test, y_train, y_test, treat_train, treat_test = train_test_split(modelling_df[x_cols], modelling_df[y_col], modelling_df[treatment_var_name], test_size=0.2, random_state=42)
 # %%
 # COvariates axploration
 # for all the variables in x_colsm list plot density plot with grouping by d_col
@@ -95,28 +128,11 @@ for col in x_cols:
     sns.kdeplot(modelling_df.loc[modelling_df[y_col] == 1, col], label = 'treatment', ax=ax)
     plt.show()
 
-# %%-----------------------------
-# Splitting the data into training and test sets
-# -------------------------------
-from sklearn.model_selection import train_test_split
-# df_train, df_test = train_test_split(modelling_df, test_size=0.2, random_state=42)
-no_nas_before_drop = modelling_df.shape[0]
-modelling_df = modelling_df.dropna()
-modelling_df.shape[0] / no_nas_before_drop
-
-X_train, X_test, y_train, y_test, treat_train, treat_test = train_test_split(modelling_df[x_cols], modelling_df[y_col], modelling_df[d_col],
-                                                                             test_size=0.8, random_state=42)
 
 # %%-----------------------------
-# Feature selection by variable importance
-# -------------------------------
-# import random forest regressor
-from sklearn.ensemble import RandomForestRegressor
+# Feature importance functions
 
-feature_select = RandomForestRegressor(n_estimators=100, max_features=2, max_depth=5, min_samples_leaf=2)
-feature_select_fit = feature_select.fit(X_train, y_train)
-
-#%%
+# Feature importance plot
 def plot_feature_importances(model, df_train):
     import numpy as np
     import matplotlib.pyplot as plt
@@ -141,12 +157,6 @@ def plot_feature_importances(model, df_train):
     # Show the plot
     plt.show()
 
-plot_feature_importances(feature_select_fit, X_train)
-
-x_cols_selected = [x_cols[i] for i in range(X_train.shape[1]) if feature_select_fit.feature_importances_[i] > 0.02]
-print(f"selected {len(x_cols_selected)} out of {len(x_cols)}")
-
-# %%-----------------------------
 # Shapley values
 def shapley_values(model, df_train):
     import shap
@@ -158,6 +168,8 @@ def shapley_values(model, df_train):
     shap_object = explainer(df_train)
     
     return shap_object
+
+# Shapley values plot 
 def plot_shapley_values(shap_object, show_bar=False, show_waterfall=False, show_beeswarm=False):
     import shap
     import matplotlib.pyplot as plt
@@ -175,17 +187,8 @@ def plot_shapley_values(shap_object, show_bar=False, show_waterfall=False, show_
     if show_beeswarm:
         shap.plots.beeswarm(shap_object, max_display=len(shap_object.feature_names), )
         plt.show()
-#%%
-shap_object = shapley_values(feature_select_fit, X_train, )
 
-plot_shapley_values(shap_object, show_bar=True, show_waterfall=True, show_beeswarm=True)
-
-
-# %%-----------------------------
-# Shapley selection
-# -------------------------------
-
-# create function shap values df
+# Shaapley values dataframe
 def shap_values_df(shap_object, df_train):
     import numpy as np
     import pandas as pd
@@ -202,17 +205,6 @@ def shap_values_df(shap_object, df_train):
     # shap_df = shap_df.sort_values(by='feature', ascending=True)
     return shap_df
 
-shap_df = shap_values_df(shap_object, X_train)
-
-import matplotlib.pyplot as plt
-
-plt.figure(figsize=(12, 6))
-plt.barh(shap_df['feature'], shap_df['mean_abs_shap'])  # Change from plt.bar to plt.barh
-plt.gca().invert_yaxis()  # Invert the y-axis order
-plt.xlabel('Mean Absolute SHAP Value')
-plt.ylabel('Features')
-plt.title('Feature Importance Based on SHAP Values')
-plt.show()
 
 # %%-----------------------------
 # Correlation plot between features
@@ -220,6 +212,8 @@ plt.show()
 def plot_correlation_matrix(df):
     import plotly.graph_objects as go
     import plotly.express as px
+    import numpy as np
+    import seaborn as sns
 
     # Create a correlation matrix
     corr_matrix = df[sorted(df.columns.values)].corr()
@@ -639,7 +633,12 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 df_doubleml = DoubleMLData(modelling_df, x_cols=x_cols_selected, y_col=y_col, d_cols=d_col)
 
 # Initialize learners with default parameters
-ml_g = RandomForestRegressor()
+ml_g = RandomForestRegressor(
+    n_estimators=100,
+    max_depth=5,
+    min_samples_leaf=2,
+    max_features=20
+)
 ml_m = RandomForestClassifier()
 
 # fit the DoubleMLPLR model
@@ -713,35 +712,14 @@ dml_plr.evaluate_learners(learners = ["ml_m"], metric=accuracy_score)
 # 
 # %% Uplift modelling from scikit-uplift
 # -------------------------------------
-def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
+def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test, 
+                    classifier, classifier_params, regressor, regressor_params, 
+                    selected_features, y_col, d_col):
     # declare sample xgboost regressor with sample parameters
-    xgb_classifier_params = {
-        "n_estimators":100, 
-        "max_depth":5, 
-        "min_child_weight":2, 
-        "learning_rate":0.01, 
-        "subsample":0.8, 
-        "colsample_bytree":0.8, 
-        "gamma":0.1, 
-        "reg_lambda":1, 
-        "reg_alpha":0, 
-        "objective":'binary:logistic', 
-        "random_state":42,
-    }
-    xgb_regressor_params = {
-        "n_estimators":100, 
-        "max_depth":5, 
-        "min_child_weight":2, 
-        "learning_rate":0.01, 
-        "subsample":0.8, 
-        "colsample_bytree":0.8, 
-        "gamma":0.1, 
-        "reg_lambda":1, 
-        "reg_alpha":0, 
-        "objective":'reg:squarederror', 
-        "random_state":42,
-    }
-    
+    # add time measurement 
+    from datetime import datetime
+    start_time = datetime.now()
+
     models_results = {
         'approach': [],
         'uplift': []
@@ -758,8 +736,8 @@ def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
 
 
     dml_plr = DoubleMLPLR(df_doubleml, 
-                          ml_l=XGBRegressor(**xgb_regressor_params), 
-                          ml_m=XGBClassifier(**xgb_classifier_params), 
+                          ml_l=regressor(**regressor_params), 
+                          ml_m=classifier(**classifier_params), 
                           n_folds=5 )
     dml_plr=dml_plr.fit()
     dm_score = dml_plr.summary['coef'].values[0]
@@ -772,7 +750,7 @@ def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
     from sklift.viz import plot_uplift_preds
     from sklift.models import SoloModel
 
-    sm = SoloModel(XGBClassifier(**xgb_classifier_params))
+    sm = SoloModel(classifier(**classifier_params))
     sm = sm.fit(X_train, y_train, treat_train)
 
     uplift_sm = sm.predict(X_test)
@@ -790,7 +768,7 @@ def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
     sm_ctrl_preds = sm.ctrl_preds_
 
     # draw the probability (predictions) distributions and their difference (uplift)
-    plot_uplift_preds(trmnt_preds=sm_trmnt_preds, ctrl_preds=sm_ctrl_preds)
+    # plot_uplift_preds(trmnt_preds=sm_trmnt_preds, ctrl_preds=sm_ctrl_preds)
 
     # sm_fi = pd.DataFrame({
     #     'feature_name': sm.estimator.feature_names_,
@@ -801,7 +779,7 @@ def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
 
     from sklift.models import ClassTransformation
 
-    ct = ClassTransformation(XGBClassifier(**xgb_classifier_params))
+    ct = ClassTransformation(classifier(**classifier_params))
     ct = ct.fit(X_train, y_train, treat_train)
 
     uplift_ct = ct.predict(X_test)
@@ -825,8 +803,8 @@ def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
     # Two models treatment
 
     tm_trmnt = TwoModels(
-        estimator_trmnt=XGBClassifier(**xgb_classifier_params), 
-        estimator_ctrl=XGBClassifier(**xgb_classifier_params), 
+        estimator_trmnt=classifier(**classifier_params), 
+        estimator_ctrl=classifier(**classifier_params), 
         method='ddr_treatment'
     )
     tm_trmnt = tm_trmnt.fit(X_train, y_train, treat_train)
@@ -838,12 +816,12 @@ def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
     models_results['approach'].append('TwoModels_ddr_treatment')
     models_results['uplift'].append(tm_trmnt_score)
     
-    plot_uplift_preds(trmnt_preds=tm_trmnt.trmnt_preds_, ctrl_preds=tm_trmnt.ctrl_preds_)
+    # plot_uplift_preds(trmnt_preds=tm_trmnt.trmnt_preds_, ctrl_preds=tm_trmnt.ctrl_preds_)
 
     # Two models control
     tm_ctrl = TwoModels(
-        estimator_trmnt=XGBClassifier(**xgb_classifier_params), 
-        estimator_ctrl=XGBClassifier(**xgb_classifier_params), 
+        estimator_trmnt=classifier(**classifier_params), 
+        estimator_ctrl=classifier(**classifier_params), 
         method='ddr_control'
     )
     tm_ctrl = tm_ctrl.fit(X_train, y_train, treat_train)
@@ -855,15 +833,114 @@ def uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test):
     models_results['approach'].append('TwoModels_ddr_control')
     models_results['uplift'].append(tm_ctrl_score)
 
-    plot_uplift_preds(trmnt_preds=tm_ctrl.trmnt_preds_, ctrl_preds=tm_ctrl.ctrl_preds_)
+    # plot_uplift_preds(trmnt_preds=tm_ctrl.trmnt_preds_, ctrl_preds=tm_ctrl.ctrl_preds_)
+    # print timedifference
+    print('Time taken: {}'.format(datetime.now() - start_time), )
+
+    return pd.DataFrame(models_results), [dml_plr, sm, ct, tm_trmnt, tm_ctrl]
+
+# %% XGBoost in all the models
+xgb_modelling_results={
+    'treatment':[],
+    'results_df':[], 
+    'models_obj':[]
+}
+
+for treatment in search_engine_changes.keys():
+    print(treatment)
+    modelling_df, treatment_var_name = treatment_variable_generation(modelling_df_full, search_engine_changes, treatment, 30, 30)
+    # train test split
+    X_train, X_test, y_train, y_test, treat_train, treat_test = train_test_split(modelling_df[selected_features], modelling_df[y_col], modelling_df[treatment_var_name], test_size=0.2, random_state=42)
+
+    # import xgb classifier and regressor
+    from xgboost import XGBClassifier, XGBRegressor
+
+    xgb_classifier_params = { "n_estimators":100, "max_depth":5, "min_child_weight":2, "learning_rate":0.01, "subsample":0.8, "colsample_bytree":0.8, "gamma":0.1, "reg_lambda":1, "reg_alpha":0, "objective":'binary:logistic', "random_state":42, }
+    xgb_regressor_params = { "n_estimators":100, "max_depth":5, "min_child_weight":2, "learning_rate":0.01, "subsample":0.8, "colsample_bytree":0.8, "gamma":0.1, "reg_lambda":1, "reg_alpha":0, "objective":'reg:squarederror', "random_state":42, }
+
+    xgb_models_results, xgb_models_objects = uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test,
+                                            classifier=XGBClassifier, classifier_params=xgb_classifier_params,
+                                            regressor=XGBRegressor, regressor_params=xgb_regressor_params,
+                                            selected_features=selected_features, y_col=y_col, d_col=treatment_var_name)
+    xgb_modelling_results['treatment'].append(treatment_var_name)
+    xgb_modelling_results['results_df'].append(xgb_models_results)
+    xgb_modelling_results['models_obj'].append(xgb_models_objects)
+
+xgb_modelling_results=pd.concat([pd.DataFrame(xgb_modelling_results['results_df'][i]["uplift"].round(3)).rename(columns = {"uplift":xgb_modelling_results['treatment'][i]}) for i in range(len(xgb_modelling_results['results_df']))], axis = 1)
+xgb_modelling_results.index = ["DoubleML", "SoloModel", "ClassTransformation", "TwoModels_ddr_treatment", "TwoModels_ddr_control"]
+xgb_modelling_results.T.style.background_gradient(cmap='RdYlGn', vmin=-0.01, vmax=0.01, low=0, high=1, axis=None).format("{:.3f}")
 
 
+# %% LightGBM in all the models
+# import LGBM classifier and regressor 
+from lightgbm import LGBMClassifier, LGBMRegressor
 
-    return pd.DataFrame(models_results), dml_plr, sm, ct, tm_trmnt, tm_ctrl
+lgb_classifier_params = {
+        "n_estimators":100,
+        "max_depth":5,
+        "learning_rate":0.1,
+        "subsample":0.8,
+        "colsample_bytree":0.8,
+        "reg_lambda":1,
+        "reg_alpha":0,
+        "random_state":42,
+    }
+lgb_regressor_params = {
+        "n_estimators":100,
+        "max_depth":5,
+        "learning_rate":0.1,
+        "subsample":0.8,
+        "colsample_bytree":0.8,
+        "reg_lambda":1,
+        "reg_alpha":0,
+        "random_state":42,
+    }
 
-models_results, dml_plr, sm, ct, tm_trmnt, tm_ctrl  = uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test)
+lgb_models_results = uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test,
+                                        classifier=LGBMClassifier, classifier_params=lgb_classifier_params,
+                                        regressor=LGBMRegressor, regressor_params=lgb_regressor_params,
+                                        selected_features=selected_features, y_col=y_col, d_col=d_col)
 
-print(models_results)
+print(lgb_models_results)
+
+# %% RandomForrest in all the models
+# import RandomForest classifier and regressor
+modelling_df_dict = {}
+
+for treatment in search_engine_changes.keys():
+    print(treatment)
+    modelling_df, treatment_var_name = treatment_variable_generation(modelling_df_full, search_engine_changes, treatment, 30, 30)
+    # train test split
+    X_train, X_test, y_train, y_test, treat_train, treat_test = train_test_split(modelling_df[selected_features], modelling_df[y_col], modelling_df[treatment_var_name], test_size=0.2, random_state=42)
+    df_dict = { 'X_train':X_train, 'X_test':X_test, 'y_train':y_train, 'y_test':y_test, 'treat_train':treat_train, 'treat_test':treat_test }
+
+    modelling_df_dict[treatment] = df_dict
+
+# %%
+rf_modelling_results={ 'treatment':[], 'results_df':[], 'models_obj':[] }
+
+for treatment in search_engine_changes.keys():
+    
+
+    # import rf classifier and regressor
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+
+    rf_regressor_params = { "n_estimators":100, "max_depth":5, "min_samples_leaf":2, "max_features":20 }
+    rf_classifier_params = { "n_estimators":100, "max_depth":5, "min_samples_leaf":2, "max_features":20 }
+    
+    rf_models_results, rf_models_objects = uplift_modeling(X_train, y_train, X_test, y_test, treat_train, treat_test,
+                                            classifier=RandomForestClassifier, classifier_params=rf_classifier_params,
+                                            regressor=RandomForestRegressor, regressor_params=rf_regressor_params,
+                                            selected_features=selected_features, y_col=y_col, d_col=treatment_var_name)
+    rf_modelling_results['treatment'].append(treatment_var_name)
+    rf_modelling_results['results_df'].append(rf_models_results)
+    rf_modelling_results['models_obj'].append(rf_models_objects)
+
+rf_modelling_results=pd.concat([pd.DataFrame(rf_modelling_results['results_df'][i]["uplift"].round(3)).rename(columns = {"uplift":rf_modelling_results['treatment'][i]}) for i in range(len(rf_modelling_results['results_df']))], axis = 1)
+rf_modelling_results.index = ["DoubleML", "SoloModel", "ClassTransformation", "TwoModels_ddr_treatment", "TwoModels_ddr_control"]
+rf_modelling_results.T.style.background_gradient(cmap='RdYlGn', vmin=-0.01, vmax=0.01, low=0, high=1, axis=None).format("{:.3f}")
+
+#%% 
 
 
 uplift_sm = sm.predict(X_test)
@@ -876,5 +953,34 @@ from scipy import stats
 zero_array = np.zeros(X_test.shape[0])
 stats.ttest_ind(uplift_ct, zero_array, equal_var=False)
 stats.ttest_ind(uplift_sm, zero_array, equal_var=False)
+
+# %% Saving workspace 
+# to saved_workspaces/workspace_{now}.pkl with time after user confirmation
+import dill
+import datetime
+ 
+# Prompt user for confirmation
+confirmation = input("Are you sure you want to save the workspace? (yes/no) ")
+
+# Save workspace if user confirms
+if confirmation == "yes":
+    now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"saved_workspaces/workspace_{now}.pkl"
+    with open(filename, "wb") as f:
+        dill.dump_session(f)
+    print("Workspace saved.")
+else:
+    print("Workspace not saved.")
+ 
+# %% Loading workspace from saved_workspaces/workspace_name.pkl
+import dill
+
+# Load workspace from file
+filename = "/saved_workspaces/workspace_2023-04-16_14-28-22.pkl"
+with open(os.getcwd() + filename, "rb") as f:
+    dill.load_session(f)
+
+# Workspace variables are now available in this script
+print("Workspace loaded.")
 
 # %%

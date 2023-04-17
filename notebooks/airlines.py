@@ -66,6 +66,8 @@ airlines = airlines[['IATA', 'Airline', 'Country']][airlines['IATA'] != ''].rese
 # save to pkl data/interim/airlines_wikipedia.pkl
 airlines.to_pickle('data/interim/airlines_wikipedia.pkl')
 
+
+# %%
 airlines = pd.read_pickle('data/interim/airlines_wikipedia.pkl')
 # join carries_unique with airlines
 carriers_unique = pd.DataFrame(carriers_unique, columns=['IATA']).drop_duplicates(subset='IATA', keep='first')
@@ -109,8 +111,14 @@ for row in tqdm.tqdm(nested_carriers_list):
         if len(to_append)>0:
             new_row.append(to_append[0])
         else:
-            new_row.append("XD")
+            new_row.append(None)
     nested_carriers_ratings.append(new_row)
+
+[len(i) for i in nested_carriers_list] == [len(i) for i in nested_carriers_ratings]
+
+# check if any of the sublist in nested_carriers_ratings is NA
+nested_carriers_ratings_save = nested_carriers_ratings
+[i for i in nested_carriers_ratings if None in i]
 
 
 # nested_carriers_ratings = nested_carriers_ratings_save
@@ -136,8 +144,19 @@ nested_carriers_df['carriers_marketing_ratings_max'] = nested_carriers_df['neste
 nested_carriers_df['carriers_marketing_ratings_mean'] = nested_carriers_df['nested_carriers_marketing_ratings'].apply(lambda x: np.mean(x))
 
 # check where nested_carriers_df has Nan values
-nested_carriers_df[nested_carriers_df['nested_carriers_marketing_ratings'].apply(lambda x: any(pd.isnull(i) for i in x))]
 
+airlines_list_where_nas = nested_carriers_df[nested_carriers_df['nested_carriers_marketing_ratings'].apply(lambda x: any(pd.isnull(i) for i in x))].nested_carriers_marketing_list.values
+# unnest a list of airlines_list_where_nas
+# Flatten the array of lists
+flattened = [value for sublist in airlines_list_where_nas for value in sublist]
+
+# Get the unique items and their counts
+unique, counts = np.unique(flattened, return_counts=True)
+
+# Create a DataFrame from the unique items and their counts
+airlines_unique_where_nas = pd.DataFrame({'airline': unique, 'count': counts}).sort_values(by='count', ascending=False)
+airlines_unique_where_nas = airlines_unique_where_nas[airlines_unique_where_nas['airline'].isin(airlines_ratings[airlines_ratings['Star Rating'].isna()]['IATA'].values)]
+airlines_unique_where_nas.head(n = 35)
 # to pickle nested_carriers_df
 nested_carriers_df.to_pickle('data/interim/nested_carriers_df.pkl')
 
