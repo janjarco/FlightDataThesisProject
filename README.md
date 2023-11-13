@@ -1,4 +1,4 @@
-FlightCustomerSegmentation
+FlightDataThesisProject
 ==============================
 
 Customer segmentation on the basis of travel agency data
