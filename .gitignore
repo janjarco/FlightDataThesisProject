@@ -90,6 +90,7 @@ target/
 # tensorboard runs
 /runs/
 
+/paper_writing/
 
 # Mac OS-specific storage files
 .DS_Store
