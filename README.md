@@ -3,6 +3,20 @@ FlightCustomerSegmentation
 
 Customer segmentation on the basis of travel agency data
 
+Project developed for my Master Thesis as a part of the program of Data Analytics and Business Economics at Lund University
+
+
+## Title: Estimating the Impact of Website Changes on Conversion Rates
+A Double Machine Learning Approach
+
+Supervisor: Simon Reese
+
+### Abstract
+This study sought to evaluate the historical impact of changes to an ordering page of an online travel agency on its conversion rates. Data gathered from the website over a year, detailing aspects such as travel dates, prices, itineraries, number of passengers, travel time, and carriers, was analyzed. External data sources were also included, with the dataset covering 12 changes to the website’s layout and payment process. The changes’ effectiveness was assessed using three methods: comparing conversion rates before and after the changes, a modified linear regression model, and the Double Machine Learning (DML) method with Random Forests as the base learners. The analysis revealed that the only modification with a statistically significant positive impact on conversion rates was related bug fixing. Most changes did not significantly affect conversion rates, and some even demonstrated a non-significant negative impact. The DML method proved a useful tool in this context, outperforming simpler comparison methods with better control for confounding variables and reducing potential bias in Average Treatment Effect (ATE) estimation. However, estimates from the DML model were sensitive to the analysis time window. This study suggests future website design should focus on user-friendly and intuitive design, clear and detailed information provision, and careful evaluation of changes’ potential impact on user experience.
+
+Keywords: website design, causal inference, observational study, average treatment effects, double machine learning
+
+
 Project Organization
 ------------
 
