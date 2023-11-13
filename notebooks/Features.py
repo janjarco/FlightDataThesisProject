@@ -5,7 +5,7 @@
 import os
 import pandas as pd
 import numpy as np
-from src.data.filter_columns_by_regex import filter_columns_by_regex
+# from src.data.filter_columns_by_regex import filter_columns_by_regex
 
 #set working directory to this from the workspace
 os.chdir('/Users/janjarco/Programming/PrivateRepository/FlightDataThesisProject')
@@ -446,6 +446,13 @@ search_engine_changes = pickle.load(open("data/processed/search_engine_changes.p
 # read data/external/google_trends_interest.csv
 google_trends = pd.read_csv("data/external/google_trends_interest.csv")
 
+# for each variable create a lag of variable with suffix _lag
+for col in google_trends.columns[google_trends.columns != 'date']:
+    for i in range(7):
+        google_trends[col+'_lag_'+str(i+1)] = google_trends[col].shift(i+1)
+
+google_trends = google_trends.bfill()
+
 # left join clicks_orders_merge_currency_gtrends and clicks_orders_merge_currency_google_trends on clicks_created_at_datetime = date
 # clicks_orders_merge_currency_gtrends = clicks_orders_merge_currency_gtrends.assign(clicks_created_at_date=lambda x: x['clicks_created_at_datetime'].dt.date)
 clicks_orders_merge_currency_gtrends = clicks_orders_merge_currency.merge(google_trends, how='left', left_on='clicks_created_at_date', right_on='date', )
@@ -454,7 +461,7 @@ clicks_orders_merge_currency_gtrends = clicks_orders_merge_currency.merge(google
 filter_columns_by_regex(clicks_orders_merge_currency_gtrends, 'trends')
 
 # clicks_orders_merge_currency_gtrends check NAs in google_trends_DK
-clicks_orders_merge_currency_gtrends['google_trends_DK'].isna().sum()
+clicks_orders_merge_currency_gtrends['google_trends_weekly_DK'].isna().sum()
 
 
 # %%
@@ -548,8 +555,11 @@ clicks_orders_merge_currency_gtrends['clicks_itinerary_sales_price_diff_fastest'
 # clicks_orders_merge_currency_gtrends['interaction_mobile_direct_flight'] = clicks_orders_merge_currency_gtrends['clicks_mobile'] * clicks_orders_merge_currency_gtrends['clicks_itinerary_direct_flight']
 clicks_orders_merge_currency_gtrends=clicks_orders_merge_currency_gtrends.replace({True: 1, False: 0})
 
-filter_columns_by_regex(clicks_orders_merge_currency_gtrends, 'ratio')
+# save to csv
+clicks_orders_merge_currency_gtrends.to_csv('data/processed/clicks_orders_merge_currency_gtrends.csv', index=False)
+# filter_columns_by_regex(clicks_orders_merge_currency_gtrends, 'ratio')
 #%%
+clicks_orders_merge_currency_gtrends = pd.read_csv('data/processed/clicks_orders_merge_currency_gtrends.csv', date_parser=True)
 # generate separate datasets by currency
 clicks_orders_merge_currency_gtrends_dkk = clicks_orders_merge_currency_gtrends[clicks_orders_merge_currency_gtrends['clicks_itinerary_currency'] == 'DKK']
 clicks_orders_merge_currency_gtrends_eur = clicks_orders_merge_currency_gtrends[clicks_orders_merge_currency_gtrends['clicks_itinerary_currency'] == 'EUR']
@@ -563,15 +573,18 @@ df_currency_dict={
     "SE": clicks_orders_merge_currency_gtrends_sek
 }
 #%%
-for key in df_currency_dict.keys():
-    df_copy = df_currency_dict[key].copy()
-    df_copy['google_trends'] = df_copy[f"google_trends_{key}"]
-    df_copy = df_copy.drop(columns=filter_columns_by_regex(df_copy, "google_trends_"))
-    df_currency_dict[key] = df_copy
+# for key in df_currency_dict.keys():
+#     df_copy = df_currency_dict[key].copy()
+#     df_copy['google_trends_weekly'] = df_copy[f"google_trends_weekly_{key}"]
+#     df_copy['google_trends_smooth'] = df_copy[f"google_trends_smooth_{key}"]
+#     df_copy = df_copy.drop(columns=filter_columns_by_regex(df_copy, "google_trends_.*_"))
+#     df_currency_dict[key] = df_copy
+from src.data.filter_columns_by_regex import filter_columns_by_regex
+filter_columns_by_regex(df_currency_dict['DK'], "trends")
 
-filter_columns_by_regex(df_currency_dict['DK'], "google")
+# show percentage of missing values for each column in orders_merge_currency_gtrends_dkk
 
-# %% Selecting columns for the model
+# %% Selecting columns for the conversion modelling
 x_cols = [
     'clicks_created_at_datetime', 
     'clicks_created_at_datetime_hour', 
@@ -584,14 +597,13 @@ x_cols = [
     'clicks_itinerary_with_baggage', 
     'clicks_mobile', 
     'clicks_passengers_count', 
-    'google_trends', 
     'ratio_sales_price_travel_time',
     'ratio_distance_passenger',
     'ratio_travel_time_distance',
     'ratio_sales_price_distance',
     'carriers_marketing_ratings_count',
     'carriers_marketing_ratings_max',
-    'carriers_marketing_ratings_min',
+    'carriers_marketing_ratings_min',   
     'carriers_marketing_ratings_mean',
     'carriers_marketing_ratings_count',
     'ratio_sales_price_carrier_rating_max',
@@ -606,6 +618,8 @@ x_cols = [
     'clicks_itinerary_sales_price_diff_best',
     'clicks_itinerary_sales_price_diff_fastest',
     ]
+
+x_cols = x_cols + filter_columns_by_regex(df_currency_dict['DK'], "trends_.*DK")
 y_col = 'orders_if_order'
 
 # select columns for the model with x_cols, y_col and d_cols
@@ -613,21 +627,76 @@ for key in df_currency_dict.keys():
     df_copy = df_currency_dict[key].copy()
     df_currency_dict[key] = df_copy[x_cols + [y_col]]
 
-#%%
+#%% save pickles for conversion modelling
 # save each df from df_currency_dict to separate pickle file
 import pickle
 for key in df_currency_dict.keys():
     df_copy = df_currency_dict[key].copy()
-    filename = f"data/processed/modelling_dataset_{key}.pkl"
+    filename = f"data/processed/modelling_dataset_clicks_{key}.pkl"
     with open(filename, 'wb') as f:
         pickle.dump(df_copy, f)
 
+# %% Selecting columns for the cancellation modelling
+import numpy as np
+clicks_orders_merge_currency_gtrends_dkk['orders_order_started'] = np.where(clicks_orders_merge_currency_gtrends_dkk['orders_order_id'].notna().copy(), True, False)
+orders_merge_currency_gtrends_dkk = clicks_orders_merge_currency_gtrends_dkk[clicks_orders_merge_currency_gtrends_dkk['orders_order_started'] == True]
 
-# %%
-# save to pickle file search_engine_changes
+# show percentage of missing values for each column in orders_merge_currency_gtrends_dkk
+missing_values = pd.DataFrame(orders_merge_currency_gtrends_dkk.isnull().mean().sort_values(ascending=False))
+missing_values.columns = ['missing_value_percentage']
+
+missing_values.loc[filter_columns_by_regex(orders_merge_currency_gtrends_dkk, "orders_"), :].sort_values(by='missing_value_percentage', ascending=False).iloc[40:80]
+
+
+x_cols = [
+    'clicks_created_at_datetime', 
+    'clicks_created_at_datetime_hour', 
+    'clicks_created_at_datetime_weekend', 
+    'clicks_itinerary_direct_flight', 
+    'clicks_itinerary_sales_price_pax', 
+    'clicks_itinerary_segment_count', 
+    'clicks_itinerary_totaldistance', 
+    'clicks_itinerary_travel_timehours', 
+    'clicks_itinerary_with_baggage', 
+    'clicks_mobile', 
+    'clicks_passengers_count', 
+    'ratio_sales_price_travel_time',
+    'ratio_distance_passenger',
+    'ratio_travel_time_distance',
+    'ratio_sales_price_distance',
+    'carriers_marketing_ratings_count',
+    'carriers_marketing_ratings_max',
+    'carriers_marketing_ratings_min',   
+    'carriers_marketing_ratings_mean',
+    'carriers_marketing_ratings_count',
+    'ratio_sales_price_carrier_rating_max',
+    'ratio_sales_price_carrier_rating_min',
+    'ratio_sales_price_carrier_rating_avg',
+    'ratio_sales_price_carrier_rating_count',
+    'clicks_itinerary_sales_price_if_cheapest',
+    'clicks_itinerary_sales_price_if_best',
+    'clicks_itinerary_sales_price_if_fastest',
+    'clicks_itinerary_sales_price_category',
+    'clicks_itinerary_sales_price_diff_cheapest',
+    'clicks_itinerary_sales_price_diff_best',
+    'clicks_itinerary_sales_price_diff_fastest',
+    'orders_search_data.search_parameters.children', 
+    'orders_search_data.search_parameters.infants', 
+    'orders_search_data.search_parameters.adults',
+    'orders_order_type',
+    'orders_addon_totalsum',
+    'orders_search_data.gate_name',
+    ]
+
+x_cols = x_cols + filter_columns_by_regex(orders_merge_currency_gtrends_dkk, "trends.*_DK")
+y_col = 'orders_cancelled'
+
+orders_merge_currency_gtrends_dkk = orders_merge_currency_gtrends_dkk[x_cols + [y_col]]
+
 import pickle
-with open('data/processed/search_engine_changes.pkl', 'wb') as f:
-    pickle.dump(search_engine_changes, f)
+filename = f"data/processed/modelling_dataset_orders_DK.pkl"
+with open(filename, 'wb') as f:
+    pickle.dump(orders_merge_currency_gtrends_dkk, f)
 
 # %% [markdown]
 # Saving workspace with user input
